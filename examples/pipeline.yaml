@@ -1,0 +1,73 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: run-prowjob-pipeline
+spec:
+  description: >-
+    Run a parameterized prowjob using gangway.
+  params:
+  - name: GANGWAY_TOKEN
+    type: string
+    description: Token to authenticate with gangway
+    default: gangway-token
+  - name: CLOUD_PROVIDER
+    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
+    default: aws
+    type: string
+  - name: DEPLOY_TEST_COMMAND
+    type: string
+    description: 'Command to run for deploying the test'
+    default: 'make e2e'
+  - description: 'Snapshot of the application'
+    name: SNAPSHOT
+    default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
+    type: string
+  - name: OPENSHIFT_VERSION
+    description: 'OpenShift version to test against'
+    default: '4.18'
+    type: string
+  - name: ARCHITECTURE
+    description: 'Architecture to test against. amd64, arm64 or multi'
+    default: 'amd64'
+    type: string
+  - name: ARTIFACTS_BUILD_ROOT
+    description: 'Image to use for building the artifatcs image'
+    default: 'brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22'
+    type: string
+  - name: DOCKERFILE_ADDITIONS
+    description: 'Dockerfile additions to use for building the artifatcs image'
+    default: 'RUN make build'
+    type: string
+  - name: ENVS
+    description: 'Environment variables to pass to the ci-operator config'
+    default: '[]'
+    type: array
+  tasks:
+  - name: run-prowjob
+    displayName: "Running prowjob $(params.PROWJOB_NAME)"
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/run-prowjob.yaml
+    params:
+    - name: CLOUD_PROVIDER
+      value: "aws"
+    - name: GANGWAY_TOKEN
+      value: gangway-token
+    - name: DEPLOY_TEST_COMMAND
+      value: "CLEANUP=true USE_OLM=false ./hack/deploy-and-e2e.sh"
+    - name: SNAPSHOT
+      value: $(params.SNAPSHOT)
+    - name: OPENSHIFT_VERSION
+      value: "4.17"
+    - name: ARCHITECTURE
+      value: "amd64"
+    - name: ARTIFACTS_BUILD_ROOT
+      value: brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22
+    - name: DOCKERFILE_ADDITIONS
+      value: RUN make build
