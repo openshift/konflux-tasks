@@ -1,0 +1,245 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: run-prowjob
+spec:
+  description: >-
+    Run a parameterized prowjob using gangway.
+  params:
+  - name: GANGWAY_TOKEN
+    type: string
+    description: Token to authenticate with gangway
+    default: gangway-token
+  - name: CLOUD_PROVIDER
+    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
+    default: aws
+    type: string
+  - name: SNAPSHOT
+    description: 'Snapshot of the application'
+    default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
+    type: string
+  - name: DEPLOY_TEST_COMMAND
+    description: 'Command to run for deploying the test'
+    default: 'make e2e'
+    type: string
+  - name: OPENSHIFT_VERSION
+    description: 'OpenShift version to test against'
+    default: '4.18'
+    type: string
+  - name: ARCHITECTURE
+    description: 'Architecture to test against. amd64, arm64 or multi'
+    default: 'amd64'
+    type: string
+  - name: ARTIFACTS_BUILD_ROOT
+    description: 'Image to use for building the artifatcs image'
+    default: 'brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22'
+    type: string
+  - name: DOCKERFILE_ADDITIONS
+    description: 'Dockerfile additions to use for building the artifatcs image'
+    default: 'RUN make build'
+    type: string
+  - name: BUNDLE_NS
+    description: 'Namespace to use if installing bundle image'
+    default: ''
+    type: string
+  - name: ENVS
+    description: 'Environment variables to pass to the ci-operator config'
+    default: '[]'
+    type: array
+  results:
+  - name: PROWJOB_ID
+    description: The triggered prowjob id
+  - name: PROWJOB_URL
+    description: The prowjob url to spyglass
+  - name: PROWJOB_STATUS
+    description: The status of the prowjob
+  steps:
+  - name: run-prowjob
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    env:
+    - name: GANGWAY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: $(params.GANGWAY_TOKEN)
+          key: token
+    - name: CLOUD_PROVIDER
+      value: $(params.CLOUD_PROVIDER)
+    - name: DEPLOY_TEST_COMMAND
+      value: $(params.DEPLOY_TEST_COMMAND)
+    - name: OPENSHIFT_VERSION
+      value: $(params.OPENSHIFT_VERSION)
+    - name: ARCHITECTURE
+      value: $(params.ARCHITECTURE)
+    - name: SNAPSHOT
+      value: $(params.SNAPSHOT)
+    - name: ORG
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pipelinesascode.tekton.dev/url-org']
+    - name: REPO
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pipelinesascode.tekton.dev/url-repository']
+    - name: COMMIT
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pipelinesascode.tekton.dev/sha']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['appstudio.openshift.io/component']
+    - name: ARTIFACTS_BUILD_ROOT
+      value: $(params.ARTIFACTS_BUILD_ROOT)
+    - name: DOCKERFILE_ADDITIONS
+      value: $(params.DOCKERFILE_ADDITIONS)
+    - name: BUNDLE_NS
+      value: $(params.BUNDLE_NS)
+    - name: ENVS
+      value: $(params.ENVS)
+    script: |
+      #!/usr/bin/env bash
+
+      # Getting tooling
+      dnf install wget jq -y --quiet > /dev/null
+      VERSION=v4.45.1
+      BINARY=yq_linux_amd64
+      wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} --quiet -O /usr/bin/yq &&\
+      chmod +x /usr/bin/yq
+
+      # Artifacts Dockerfile
+      DOCKERFILE_LITERAL=$(cat <<EOF
+      FROM ${BUILD_ROOT}
+      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/oc /bin/oc
+      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/kubectl /bin/kubectl
+      RUN umask 0002
+      WORKDIR /workspace
+      RUN curl -L -o repo.zip "https://github.com/${ORG}/${REPO}/archive/${COMMIT}.zip" && unzip repo.zip
+      WORKDIR /workspace/${REPO}-${COMMIT}
+      ${DOCKERFILE_ADDITIONS}
+      RUN find /workspace -type d -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /workspace -type f -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /go -type d -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /go -type f -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      EOF
+      )
+      export DOCKERFILE_LITERAL
+
+      # Modifiying ci-op config
+      curl -s https://raw.githubusercontent.com/openshift/release/refs/heads/master/ci-operator/config/openshift/ci-tools/openshift-ci-tools-master.yaml > config.yaml
+      yq -i 'del(.build_root.from_repository)' config.yaml
+      yq -i '(.build_root.project_image += {"dockerfile_literal": strenv(DOCKERFILE_LITERAL) })' config.yaml
+      yq -i 'del(.images)' config.yaml 
+      yq -i 'del(.base_images)' config.yaml
+      yq -i 'del(.binary_build_commands)' config.yaml
+      yq -i 'del(.releases.latest)' config.yaml
+      yq -i 'del(.test_binary_build_commands)' config.yaml
+      yq -i 'del(.promotion)' config.yaml
+      yq -i 'del( .tests[] | select(.as != "konflux*") )' config.yaml
+
+      KONFLUX_IMAGE=$(jq -r --arg component_name "${COMPONENT_NAME}" '.components[] | select(.name == $component_name) | .containerImage' <<< "${SNAPSHOT}")
+      # KONFLUX_IMAGE=$(jq -r -c '.components[0].containerImage' <<< "${SNAPSHOT}")
+      TAG=$(echo "$KONFLUX_IMAGE" | cut -d':' -f2)
+      RNN=$(echo "$KONFLUX_IMAGE" | cut -d':' -f1)
+      NAME=$(echo "$RNN" | rev | cut -d'/' -f1 | rev)
+      NAMESPACE=$(echo "$RNN" | rev | cut -d'/' -f2 | rev)
+      REGISTRY=$(echo "$RNN" | rev | cut -d'/' -f3- | rev)
+      yq -i '(.external_images.konflux.registry = "'${REGISTRY}'")' config.yaml
+      yq -i '(.external_images.konflux.namespace = "'${NAMESPACE}'")' config.yaml
+      yq -i '(.external_images.konflux.name = "'${NAME}'")' config.yaml
+      yq -i '(.external_images.konflux.tag = "'${TAG}'")' config.yaml
+      yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
+      yq -i '(.releases.latest.release.architectrue = "amd64")' config.yaml
+      yq -i '(.releases.latest.release.channel = "stable")' config.yaml
+
+      sed -i "s|konflux-operator-placeholder|pipeline:konflux|g" config.yaml
+      sed -i "s|bundle-placeholder|pipeline:konflux|g" config.yaml
+      sed -i "s|konflux-artifacts-placeholder|root|g" config.yaml
+      sed -i "s|make-placeholder|$DEPLOY_TEST_COMMAND|g" config.yaml
+
+      if [[ $ARCHITECTURE == "arm64" ]]; then
+        sed -i "s|amd64|arm64|g" config.yaml
+        yq -i '(.tests[].node_architecture += "arm64")' config.yaml
+        yq -i '(.releases.latest.release.architecture = "multi")' config.yaml
+      fi
+
+      if [[ $BUNDLE_NS != "" ]]; then
+        PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-bundle"
+        sed -i "s|operator-ns-placeholder|$BUNDLE_NS|g" config.yaml
+        yq -i 'del( .tests[] | select(.as != "*bundle*") )' config.yaml
+      elif [[ $CLOUD_PROVIDER == "gcp" ]]; then
+          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-gcp"
+          yq -i 'del( .tests[] | select(.as != "*gcp*") )' config.yaml
+      elif [[ $CLOUD_PROVIDER == "azure" ]]; then
+          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-azure"
+          yq -i 'del( .tests[] | select(.as != "*azure*") )' config.yaml
+      else
+          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-aws"
+          yq -i 'del( .tests[] | select(.as != "*aws*") )' config.yaml
+      fi
+
+      yq -o=json config.yaml | jq -Rs . > config.json
+      payload=$(jq -n --arg job "$PROWJOB_NAME" \
+            --argjson config "$(cat config.json)" \
+            '{
+              "job_name": $job,
+              "job_execution_type": "1",
+              "pod_spec_options": {
+                "envs": {
+                  "UNRESOLVED_CONFIG": $config
+                },
+                "annotations": {
+                  "creator": "konflux"
+                }
+              }
+            }')
+
+      # Triggering PJ via gangway and getting ID/URL
+      curl -s -X POST -H "Authorization: Bearer $GANGWAY_TOKEN" \
+      -H "Content-Type: application/json" -d "$payload" \
+      https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions >output.json
+      PROWJOB_ID=$(jq -r '.id // empty' output.json)
+      if [[ -z "$PROWJOB_ID" ]]; then
+        echo "❌ Error: Failed to extract job ID from response."
+        echo "👉 Probably expired gangway token."
+        exit 1
+      fi
+      sleep 10
+      curl -s https://prow.ci.openshift.org/prowjob?prowjob=$PROWJOB_ID >pj.yaml
+      PROWJOB_URL=$(cat pj.yaml | yq -r '.status.url')
+
+      echo -n "${PROWJOB_ID}" | tee $(results.PROWJOB_ID.path)
+      echo
+      echo -n "🔗 "
+      echo -n "${PROWJOB_URL}" | tee $(results.PROWJOB_URL.path)
+  - name: report-prowjob-status
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    env:
+      - name: PROWJOB_ID_PATH
+        value: $(results.PROWJOB_ID.path)
+      - name: GANGWAY_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: $(params.GANGWAY_TOKEN)
+            key: token
+    script: |
+      #!/usr/bin/env bash
+      dnf install jq -y --quiet > /dev/null
+      PROWJOB_ID=$(cat $PROWJOB_ID_PATH)
+      while true; do
+        curl -s -H "Authorization: Bearer $GANGWAY_TOKEN" \
+        https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions/$PROWJOB_ID >output.json
+        STATUS=$(cat output.json | jq '.job_status')
+        if [ "$STATUS" == "\"SUCCESS"\" ]; then
+          PROWJOB_STATUS="$STATUS"
+          echo "✅ "
+          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          exit 0
+        fi
+        if [ "$STATUS" == "\"FAILURE"\" ] || [ "$STATUS" == "\"ABORTED"\" ] || [ "$STATUS" == "\"ERROR"\" ]; then
+          PROWJOB_STATUS="$STATUS"
+          echo "❌ "
+          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          exit 1
+        fi
+        sleep 30
+      done
