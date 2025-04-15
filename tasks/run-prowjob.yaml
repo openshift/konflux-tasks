@@ -44,7 +44,7 @@ spec:
     type: string
   - name: ENVS
     description: 'Environment variables to pass to the ci-operator config'
-    default: '[]'
+    default: [""]
     type: array
   results:
   - name: PROWJOB_ID

@@ -40,7 +40,7 @@ spec:
     type: string
   - name: ENVS
     description: 'Environment variables to pass to the ci-operator config'
-    default: '[]'
+    default: [""]
     type: array
   tasks:
   - name: run-prowjob
