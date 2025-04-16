@@ -38,10 +38,6 @@ spec:
     description: 'Dockerfile additions to use for building the artifatcs image'
     default: 'RUN make build'
     type: string
-  - name: ENVS
-    description: 'Environment variables to pass to the ci-operator config'
-    default: [""]
-    type: array
   tasks:
   - name: run-prowjob
     displayName: "Running prowjob $(params.PROWJOB_NAME)"

@@ -42,10 +42,6 @@ spec:
     description: 'Namespace to use if installing bundle image'
     default: ''
     type: string
-  - name: ENVS
-    description: 'Environment variables to pass to the ci-operator config'
-    default: [""]
-    type: array
   results:
   - name: PROWJOB_ID
     description: The triggered prowjob id
@@ -75,15 +71,15 @@ spec:
     - name: ORG
       valueFrom:
         fieldRef:
-          fieldPath: metadata.labels['pipelinesascode.tekton.dev/url-org']
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/url-org']
     - name: REPO
       valueFrom:
         fieldRef:
-          fieldPath: metadata.labels['pipelinesascode.tekton.dev/url-repository']
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/url-repository']
     - name: COMMIT
       valueFrom:
         fieldRef:
-          fieldPath: metadata.labels['pipelinesascode.tekton.dev/sha']
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/sha']
     - name: COMPONENT_NAME
       valueFrom:
         fieldRef:
@@ -94,8 +90,6 @@ spec:
       value: $(params.DOCKERFILE_ADDITIONS)
     - name: BUNDLE_NS
       value: $(params.BUNDLE_NS)
-    - name: ENVS
-      value: $(params.ENVS)
     script: |
       #!/usr/bin/env bash
 
@@ -108,7 +102,7 @@ spec:
 
       # Artifacts Dockerfile
       DOCKERFILE_LITERAL=$(cat <<EOF
-      FROM ${BUILD_ROOT}
+      FROM ${ARTIFACTS_BUILD_ROOT}
       COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/oc /bin/oc
       COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/kubectl /bin/kubectl
       RUN umask 0002
@@ -125,16 +119,16 @@ spec:
       export DOCKERFILE_LITERAL
 
       # Modifiying ci-op config
-      curl -s https://raw.githubusercontent.com/openshift/release/refs/heads/master/ci-operator/config/openshift/ci-tools/openshift-ci-tools-master.yaml > config.yaml
-      yq -i 'del(.build_root.from_repository)' config.yaml
+      curl -s https://raw.githubusercontent.com/openshift/release/refs/heads/master/ci-operator/config/openshift/konflux-tasks/openshift-konflux-tasks-main.yaml > config.yaml
+      yq -i 'del(.build_root.project_image)' config.yaml
       yq -i '(.build_root.project_image += {"dockerfile_literal": strenv(DOCKERFILE_LITERAL) })' config.yaml
-      yq -i 'del(.images)' config.yaml 
-      yq -i 'del(.base_images)' config.yaml
-      yq -i 'del(.binary_build_commands)' config.yaml
-      yq -i 'del(.releases.latest)' config.yaml
-      yq -i 'del(.test_binary_build_commands)' config.yaml
-      yq -i 'del(.promotion)' config.yaml
-      yq -i 'del( .tests[] | select(.as != "konflux*") )' config.yaml
+      yq -i '(.external_images.konflux.registry = "'${KONFLUX_REGISTRY}'")' config.yaml
+      yq -i '(.external_images.konflux.namespace = "'${KONFLUX_NAMESPACE}'")' config.yaml
+      yq -i '(.external_images.konflux.name = "'${KONFLUX_NAME}'")' config.yaml
+      yq -i '(.external_images.konflux.tag = "'${KONFLUX_TAG}'")' config.yaml
+      yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
+      yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
+      yq -i '(.releases.latest.release.channel = "stable")' config.yaml
 
       KONFLUX_IMAGE=$(jq -r --arg component_name "${COMPONENT_NAME}" '.components[] | select(.name == $component_name) | .containerImage' <<< "${SNAPSHOT}")
       # KONFLUX_IMAGE=$(jq -r -c '.components[0].containerImage' <<< "${SNAPSHOT}")
@@ -148,33 +142,34 @@ spec:
       yq -i '(.external_images.konflux.name = "'${NAME}'")' config.yaml
       yq -i '(.external_images.konflux.tag = "'${TAG}'")' config.yaml
       yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
-      yq -i '(.releases.latest.release.architectrue = "amd64")' config.yaml
+      yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
       yq -i '(.releases.latest.release.channel = "stable")' config.yaml
 
-      sed -i "s|konflux-operator-placeholder|pipeline:konflux|g" config.yaml
-      sed -i "s|bundle-placeholder|pipeline:konflux|g" config.yaml
-      sed -i "s|konflux-artifacts-placeholder|root|g" config.yaml
-      sed -i "s|make-placeholder|$DEPLOY_TEST_COMMAND|g" config.yaml
+      sed -i "s|operator-placeholder|pipeline:konflux|g" config.yaml
+      sed -i "s|operator-placeholder|pipeline:konflux|g" config.yaml
+      sed -i "s|command-placeholder|$DEPLOY_TEST_COMMAND|g" config.yaml
 
       if [[ $ARCHITECTURE == "arm64" ]]; then
         sed -i "s|amd64|arm64|g" config.yaml
         yq -i '(.tests[].node_architecture += "arm64")' config.yaml
-        yq -i '(.releases.latest.release.architecture = "multi")' config.yaml
+      fi
+      if [[ $ARCHITECTURE == "multi" ]]; then
+        sed -i "s|amd64|multi|g" config.yaml
       fi
 
       if [[ $BUNDLE_NS != "" ]]; then
-        PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-bundle"
-        sed -i "s|operator-ns-placeholder|$BUNDLE_NS|g" config.yaml
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-bundle"
+        sed -i "s|ns-placeholder|$BUNDLE_NS|g" config.yaml
         yq -i 'del( .tests[] | select(.as != "*bundle*") )' config.yaml
       elif [[ $CLOUD_PROVIDER == "gcp" ]]; then
-          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-gcp"
-          yq -i 'del( .tests[] | select(.as != "*gcp*") )' config.yaml
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-gcp"
+        yq -i 'del( .tests[] | select(.as != "*gcp*") )' config.yaml
       elif [[ $CLOUD_PROVIDER == "azure" ]]; then
-          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-azure"
-          yq -i 'del( .tests[] | select(.as != "*azure*") )' config.yaml
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-azure"
+        yq -i 'del( .tests[] | select(.as != "*azure*") )' config.yaml
       else
-          PROWJOB_NAME="periodic-ci-openshift-ci-tools-master-konflux-test-aws"
-          yq -i 'del( .tests[] | select(.as != "*aws*") )' config.yaml
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-aws"
+        yq -i 'del( .tests[] | select(.as != "*aws*") )' config.yaml
       fi
 
       yq -o=json config.yaml | jq -Rs . > config.json
@@ -187,9 +182,6 @@ spec:
                 "envs": {
                   "UNRESOLVED_CONFIG": $config
                 },
-                "annotations": {
-                  "creator": "konflux"
-                }
               }
             }')
 
@@ -203,9 +195,14 @@ spec:
         echo "👉 Probably expired gangway token."
         exit 1
       fi
-      sleep 10
-      curl -s https://prow.ci.openshift.org/prowjob?prowjob=$PROWJOB_ID >pj.yaml
-      PROWJOB_URL=$(cat pj.yaml | yq -r '.status.url')
+      while true; do
+        sleep 10
+        curl -s https://prow.ci.openshift.org/prowjob?prowjob=$PROWJOB_ID >pj.yaml
+        PROWJOB_URL=$(cat pj.yaml | yq -r '.status.url // empty')
+        if [[ -n "$PROWJOB_URL" ]]; then
+          break
+        fi
+      done
 
       echo -n "${PROWJOB_ID}" | tee $(results.PROWJOB_ID.path)
       echo
@@ -214,13 +211,13 @@ spec:
   - name: report-prowjob-status
     image: registry.access.redhat.com/ubi9/ubi:latest
     env:
-      - name: PROWJOB_ID_PATH
-        value: $(results.PROWJOB_ID.path)
-      - name: GANGWAY_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: $(params.GANGWAY_TOKEN)
-            key: token
+    - name: PROWJOB_ID_PATH
+      value: $(results.PROWJOB_ID.path)
+    - name: GANGWAY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: $(params.GANGWAY_TOKEN)
+          key: token
     script: |
       #!/usr/bin/env bash
       dnf install jq -y --quiet > /dev/null
@@ -228,6 +225,10 @@ spec:
       while true; do
         curl -s -H "Authorization: Bearer $GANGWAY_TOKEN" \
         https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions/$PROWJOB_ID >output.json
+        if ! jq empty output.json 2>/dev/null; then
+          sleep 30
+          continue
+        fi
         STATUS=$(cat output.json | jq '.job_status')
         if [ "$STATUS" == "\"SUCCESS"\" ]; then
           PROWJOB_STATUS="$STATUS"
