@@ -27,12 +27,12 @@ spec:
     default: '4.18'
     type: string
   - name: ARCHITECTURE
-    description: 'Architecture to test against. amd64, arm64 or multi'
+    description: 'Architecture to test against. amd64, arm64'
     default: 'amd64'
     type: string
   - name: ARTIFACTS_BUILD_ROOT
     description: 'Image to use for building the artifatcs image'
-    default: 'brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22'
+    default: 'quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
     type: string
   - name: DOCKERFILE_ADDITIONS
     description: 'Dockerfile additions to use for building the artifatcs image'
@@ -40,6 +40,10 @@ spec:
     type: string
   - name: BUNDLE_NS
     description: 'Namespace to use if installing bundle image'
+    default: ''
+    type: string
+  - name: ENVS
+    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
     default: ''
     type: string
   results:
@@ -90,6 +94,8 @@ spec:
       value: $(params.DOCKERFILE_ADDITIONS)
     - name: BUNDLE_NS
       value: $(params.BUNDLE_NS)
+    - name: ENVS
+      value: $(params.ENVS)
     script: |
       #!/usr/bin/env bash
 
@@ -121,15 +127,8 @@ spec:
       # Modifiying ci-op config
       curl -s https://raw.githubusercontent.com/openshift/release/refs/heads/master/ci-operator/config/openshift/konflux-tasks/openshift-konflux-tasks-main.yaml > config.yaml
       yq -i 'del(.build_root.project_image)' config.yaml
+      yq -i 'del(.tests[].steps.test[].cli)' config.yaml
       yq -i '(.build_root.project_image += {"dockerfile_literal": strenv(DOCKERFILE_LITERAL) })' config.yaml
-      yq -i '(.external_images.konflux.registry = "'${KONFLUX_REGISTRY}'")' config.yaml
-      yq -i '(.external_images.konflux.namespace = "'${KONFLUX_NAMESPACE}'")' config.yaml
-      yq -i '(.external_images.konflux.name = "'${KONFLUX_NAME}'")' config.yaml
-      yq -i '(.external_images.konflux.tag = "'${KONFLUX_TAG}'")' config.yaml
-      yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
-      yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
-      yq -i '(.releases.latest.release.channel = "stable")' config.yaml
-
       KONFLUX_IMAGE=$(jq -r --arg component_name "${COMPONENT_NAME}" '.components[] | select(.name == $component_name) | .containerImage' <<< "${SNAPSHOT}")
       # KONFLUX_IMAGE=$(jq -r -c '.components[0].containerImage' <<< "${SNAPSHOT}")
       TAG=$(echo "$KONFLUX_IMAGE" | cut -d':' -f2)
@@ -149,18 +148,28 @@ spec:
       sed -i "s|operator-placeholder|pipeline:konflux|g" config.yaml
       sed -i "s|command-placeholder|$DEPLOY_TEST_COMMAND|g" config.yaml
 
+      # Arch specific modifications
       if [[ $ARCHITECTURE == "arm64" ]]; then
         sed -i "s|amd64|arm64|g" config.yaml
-        yq -i '(.tests[].node_architecture += "arm64")' config.yaml
-      fi
-      if [[ $ARCHITECTURE == "multi" ]]; then
-        sed -i "s|amd64|multi|g" config.yaml
+        yq -i '(.releases.latest.release.architecture = "multi")' config.yaml
       fi
 
+      # ENV var modifications
+      if [[ -n "$ENVS" ]]; then
+        IFS=',' read -ra PAIRS <<< "$ENVS"
+        for pair in "${PAIRS[@]}"; do
+          KEY=$(echo "$pair" | cut -d'=' -f1)
+          VALUE=$(echo "$pair" | cut -d'=' -f2-)
+          yq -i '.tests[].steps.env."'"${KEY}"'" = "'"${VALUE}"'"' config.yaml
+        done
+      fi
+
+      # Chosing prowjob
       if [[ $BUNDLE_NS != "" ]]; then
         PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-bundle"
         sed -i "s|ns-placeholder|$BUNDLE_NS|g" config.yaml
         yq -i 'del( .tests[] | select(.as != "*bundle*") )' config.yaml
+        yq -i 'del(.tests[].steps.env.OO_INSTALL_MODE)' config.yaml
       elif [[ $CLOUD_PROVIDER == "gcp" ]]; then
         PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-gcp"
         yq -i 'del( .tests[] | select(.as != "*gcp*") )' config.yaml
@@ -172,18 +181,34 @@ spec:
         yq -i 'del( .tests[] | select(.as != "*aws*") )' config.yaml
       fi
 
-      yq -o=json config.yaml | jq -Rs . > config.json
-      payload=$(jq -n --arg job "$PROWJOB_NAME" \
-            --argjson config "$(cat config.json)" \
-            '{
-              "job_name": $job,
-              "job_execution_type": "1",
-              "pod_spec_options": {
-                "envs": {
-                  "UNRESOLVED_CONFIG": $config
-                },
-              }
-            }')
+      # Querying config resolver to get the resolved config
+      yq -o=json config.yaml > config.json
+      MAX_RETRIES=3
+      while true; do
+        if curl -sSf -f -d @config.json https://config.ci.openshift.org/resolve > resolved.json; then
+          break
+        else
+            sleep 10
+        fi
+        MAX_RETRIES=$((MAX_RETRIES - 1))
+        if [ $MAX_RETRIES -le 0 ]; then
+          echo "❌ Error: Config resolver is probably down."
+          exit 1
+        fi
+      done
+
+      # Specifying the gangway options
+      GZIP_SPEC=$(gzip -c resolved.json | base64 -w0)
+      payload=$(jq -n --arg job "$PROWJOB_NAME" --arg config "$GZIP_SPEC" \
+        '{
+          "job_name": $job,
+          "job_execution_type": "1",
+          "pod_spec_options": {
+            "envs": {
+              "CONFIG_SPEC": $config,
+            },
+          }
+        }')
 
       # Triggering PJ via gangway and getting ID/URL
       curl -s -X POST -H "Authorization: Bearer $GANGWAY_TOKEN" \
@@ -195,10 +220,12 @@ spec:
         echo "👉 Probably expired gangway token."
         exit 1
       fi
+
+      # Getting the prowjob spyglass URL
       while true; do
         sleep 10
         curl -s https://prow.ci.openshift.org/prowjob?prowjob=$PROWJOB_ID >pj.yaml
-        PROWJOB_URL=$(cat pj.yaml | yq -r '.status.url // empty')
+        PROWJOB_URL=$(yq eval '.status.url // ""' pj.yaml)
         if [[ -n "$PROWJOB_URL" ]]; then
           break
         fi
