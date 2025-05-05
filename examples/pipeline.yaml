@@ -32,12 +32,18 @@ spec:
     type: string
   - name: ARTIFACTS_BUILD_ROOT
     description: 'Image to use for building the artifatcs image'
-    default: 'brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22'
+    default: 'quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
     type: string
   - name: DOCKERFILE_ADDITIONS
     description: 'Dockerfile additions to use for building the artifatcs image'
     default: 'RUN make build'
     type: string
+  - name: BUNDLE_NS
+    description: 'Namespace to use if installing bundle image'
+    default: ''
+  - name: ENVS
+    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
+    default: ''
   tasks:
   - name: run-prowjob
     displayName: "Running prowjob $(params.PROWJOB_NAME)"
@@ -52,18 +58,14 @@ spec:
         value: tasks/run-prowjob.yaml
     params:
     - name: CLOUD_PROVIDER
-      value: "aws"
-    - name: GANGWAY_TOKEN
-      value: gangway-token
+      value: "gcp"
     - name: DEPLOY_TEST_COMMAND
       value: "CLEANUP=true USE_OLM=false ./hack/deploy-and-e2e.sh"
     - name: SNAPSHOT
       value: $(params.SNAPSHOT)
     - name: OPENSHIFT_VERSION
       value: "4.17"
-    - name: ARCHITECTURE
-      value: "amd64"
     - name: ARTIFACTS_BUILD_ROOT
-      value: brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22
+      value: quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.23-openshift-4.19
     - name: DOCKERFILE_ADDITIONS
       value: RUN make build
