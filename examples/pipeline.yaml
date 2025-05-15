@@ -6,44 +6,47 @@ spec:
   description: >-
     Run a parameterized prowjob using gangway.
   params:
+  - name: SNAPSHOT
+    description: 'Snapshot of the application'
   - name: GANGWAY_TOKEN
     type: string
-    description: Token to authenticate with gangway
     default: gangway-token
+    description: Token to authenticate with gangway
+
+  # Test parameters
   - name: CLOUD_PROVIDER
-    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
-    default: aws
     type: string
+    default: aws
+    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
+  - name: OPENSHIFT_VERSION
+    type: string
+    default: '4.18'
+    description: 'OpenShift version to test against'
+  - name: ARCHITECTURE
+    type: string
+    default: 'amd64'
+    description: 'Architecture to test against. amd64, arm64'
+
+  # Artifacts image parameters
+  - name: ARTIFACTS_BUILD_ROOT
+    type: string
+    description: 'Image to use for building the artifatcs image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
+  - name: DOCKERFILE_ADDITIONS
+    type: string
+    description: 'Dockerfile additions to use for building the artifatcs image, e.g. RUN make build'
   - name: DEPLOY_TEST_COMMAND
     type: string
-    description: 'Command to run for deploying the test'
-    default: 'make e2e'
-  - description: 'Snapshot of the application'
-    name: SNAPSHOT
-    default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
-    type: string
-  - name: OPENSHIFT_VERSION
-    description: 'OpenShift version to test against'
-    default: '4.18'
-    type: string
-  - name: ARCHITECTURE
-    description: 'Architecture to test against. amd64, arm64 or multi'
-    default: 'amd64'
-    type: string
-  - name: ARTIFACTS_BUILD_ROOT
-    description: 'Image to use for building the artifatcs image'
-    default: 'quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
-    type: string
-  - name: DOCKERFILE_ADDITIONS
-    description: 'Dockerfile additions to use for building the artifatcs image'
-    default: 'RUN make build'
-    type: string
+    description: 'Command that deploys and/or tests the OPERATOR_IMAGE on the cluster, e.g. make deploy IMG="${OPERATOR_IMAGE}" && make e2e'
+  
+  # Special parameters
   - name: BUNDLE_NS
+    type: string
+    default: ''
     description: 'Namespace to use if installing bundle image'
-    default: ''
   - name: ENVS
-    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
+    type: string
     default: ''
+    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
   tasks:
   - name: run-prowjob
     displayName: "Running prowjob $(params.PROWJOB_NAME)"
@@ -57,15 +60,15 @@ spec:
       - name: pathInRepo
         value: tasks/run-prowjob.yaml
     params:
-    - name: CLOUD_PROVIDER
-      value: "gcp"
-    - name: DEPLOY_TEST_COMMAND
-      value: "CLEANUP=true USE_OLM=false ./hack/deploy-and-e2e.sh"
     - name: SNAPSHOT
       value: $(params.SNAPSHOT)
+    - name: CLOUD_PROVIDER
+      value: "gcp"
     - name: OPENSHIFT_VERSION
       value: "4.17"
     - name: ARTIFACTS_BUILD_ROOT
       value: quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.23-openshift-4.19
     - name: DOCKERFILE_ADDITIONS
       value: RUN make build
+    - name: DEPLOY_TEST_COMMAND
+      value: "CLEANUP=true USE_OLM=false ./hack/deploy-and-e2e.sh"

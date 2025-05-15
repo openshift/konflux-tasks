@@ -8,7 +8,7 @@ To use these tasks, ensure you’ve completed the following:
 - You are **onboarded to the Konflux platform**.
 - You have added a **gangway token secret** to your Konflux tenant. The secret must contain a key named `token`.
 
-To generate the token used to trigger prowjobs, run:
+To get the token used to trigger prowjobs, run:
 ```
 oc --context app.ci -n konflux-tp extract secret/gangway-token-dockercfg-wbq9f
 ```
