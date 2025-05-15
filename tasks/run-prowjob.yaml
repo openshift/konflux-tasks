@@ -6,46 +6,47 @@ spec:
   description: >-
     Run a parameterized prowjob using gangway.
   params:
-  - name: GANGWAY_TOKEN
-    type: string
-    description: Token to authenticate with gangway
-    default: gangway-token
-  - name: CLOUD_PROVIDER
-    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
-    default: aws
-    type: string
   - name: SNAPSHOT
     description: 'Snapshot of the application'
-    default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
+  - name: GANGWAY_TOKEN
     type: string
-  - name: DEPLOY_TEST_COMMAND
-    description: 'Command to run for deploying the test'
-    default: 'make e2e'
+    default: gangway-token
+    description: Token to authenticate with gangway
+
+  # Test parameters
+  - name: CLOUD_PROVIDER
     type: string
+    default: aws
+    description: 'Cloud provider to use for the test (one of aws, gcp, azure)'
   - name: OPENSHIFT_VERSION
-    description: 'OpenShift version to test against'
+    type: string
     default: '4.18'
-    type: string
+    description: 'OpenShift version to test against'
   - name: ARCHITECTURE
-    description: 'Architecture to test against. amd64, arm64'
+    type: string
     default: 'amd64'
-    type: string
+    description: 'Architecture to test against. amd64, arm64'
+
+  # Artifacts image parameters
   - name: ARTIFACTS_BUILD_ROOT
-    description: 'Image to use for building the artifatcs image'
-    default: 'quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
     type: string
+    description: 'Image to use for building the artifatcs image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
   - name: DOCKERFILE_ADDITIONS
-    description: 'Dockerfile additions to use for building the artifatcs image'
-    default: 'RUN make build'
     type: string
+    description: 'Dockerfile additions to use for building the artifatcs image, e.g. RUN make build'
+  - name: DEPLOY_TEST_COMMAND
+    type: string
+    description: 'Command that deploys and tests the OPERATOR_IMAGE on the cluster, e.g. make deploy && make test'
+  
+  # Special parameters
   - name: BUNDLE_NS
+    type: string
+    default: ''
     description: 'Namespace to use if installing bundle image'
-    default: ''
-    type: string
   - name: ENVS
-    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
-    default: ''
     type: string
+    default: ''
+    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
   results:
   - name: PROWJOB_ID
     description: The triggered prowjob id
