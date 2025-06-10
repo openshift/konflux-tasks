@@ -30,19 +30,27 @@ spec:
   # Artifacts image parameters
   - name: ARTIFACTS_BUILD_ROOT
     type: string
-    description: 'Image to use for building the artifatcs image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
+    description: 'Image to use for building the artifacts image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
   - name: DOCKERFILE_ADDITIONS
     type: string
-    description: 'Dockerfile additions to use for building the artifatcs image, e.g. RUN make build'
+    description: 'Dockerfile additions to use for building the artifacts image, e.g. RUN make build'
   - name: DEPLOY_TEST_COMMAND
     type: string
     description: 'Command that deploys and tests the OPERATOR_IMAGE on the cluster, e.g. make deploy && make test'
   
   # Special parameters
+  - name: BUNDLE_PRE_TEST_COMMAND
+    type: string
+    default: ''
+    description: 'Only use with bundle image test! Pre-test command to run before the test, e.g. oc apply ...'
   - name: BUNDLE_NS
     type: string
     default: ''
     description: 'Namespace to use if installing bundle image'
+  - name: PULL_SECRET
+    type: string
+    default: ''
+    description: 'Secret created by the user in https://vault.ci.openshift.org/ in the test-credential namespace with the field .dockerconfigjson. Necessary for private images'
   - name: ENVS
     type: string
     default: ''
@@ -93,8 +101,12 @@ spec:
       value: $(params.ARTIFACTS_BUILD_ROOT)
     - name: DOCKERFILE_ADDITIONS
       value: $(params.DOCKERFILE_ADDITIONS)
+    - name: BUNDLE_PRE_TEST_COMMAND
+      value: $(params.BUNDLE_PRE_TEST_COMMAND)
     - name: BUNDLE_NS
       value: $(params.BUNDLE_NS)
+    - name: PULL_SECRET
+      value: $(params.PULL_SECRET)
     - name: ENVS
       value: $(params.ENVS)
     script: |
@@ -141,6 +153,9 @@ spec:
       yq -i '(.external_images.konflux.namespace = "'${NAMESPACE}'")' config.yaml
       yq -i '(.external_images.konflux.name = "'${NAME}'")' config.yaml
       yq -i '(.external_images.konflux.tag = "'${TAG}'")' config.yaml
+      if [[ -n "$PULL_SECRET" ]]; then
+        yq -i '(.external_images.konflux.pull_secret = "'${PULL_SECRET}'")' config.yaml
+      fi
       yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
       yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
       yq -i '(.releases.latest.release.channel = "stable")' config.yaml
@@ -169,6 +184,9 @@ spec:
       if [[ $BUNDLE_NS != "" ]]; then
         PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-bundle"
         sed -i "s|ns-placeholder|$BUNDLE_NS|g" config.yaml
+        sed -i "s|optional-operators-ci-operator-sdk-aws|optional-operators-ci-operator-sdk-$CLOUD_PROVIDER|g" config.yaml
+        cluster_profile=$(yq '( .tests[] | select(.as == "*'${CLOUD_PROVIDER}'*") |.steps.cluster_profile )' config.yaml)
+        sed -i "s|cluster_profile: aws|cluster_profile: $cluster_profile|g" config.yaml
         yq -i 'del( .tests[] | select(.as != "*bundle*") )' config.yaml
         yq -i 'del(.tests[].steps.env.OO_INSTALL_MODE)' config.yaml
       elif [[ $CLOUD_PROVIDER == "gcp" ]]; then
@@ -180,6 +198,15 @@ spec:
       else
         PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-aws"
         yq -i 'del( .tests[] | select(.as != "*aws*") )' config.yaml
+      fi
+
+      # Bundle pre-test command
+      if [[ -n "$BUNDLE_PRE_TEST_COMMAND" ]]; then
+        yq -i '.tests[0].steps.pre =  [ {"chain": "ipi-"+"'${CLOUD_PROVIDER}'"+"-pre"} ]' config.yaml
+        yq -i '.tests[0].steps.pre += [ .tests[].steps.test[0] ]' config.yaml
+        yq -i '.tests[0].steps.pre[1].as = "konflux-pre"' config.yaml
+        yq -i '.tests[0].steps.pre[1].commands = env(BUNDLE_PRE_TEST_COMMAND)' config.yaml
+        yq -i '.tests[0].steps.pre += [ {"ref": "optional-operators-operator-sdk"} ]' config.yaml
       fi
 
       # Querying config resolver to get the resolved config
@@ -201,10 +228,14 @@ spec:
       # Specifying the gangway options
       GZIP_SPEC=$(gzip -c resolved.json | base64 -w0)
       payload=$(jq -n --arg job "$PROWJOB_NAME" --arg config "$GZIP_SPEC" \
+        --arg org "$ORG" --arg repo "$REPO" \
         '{
           "job_name": $job,
           "job_execution_type": "1",
           "pod_spec_options": {
+            "annotations": {
+              "ci.openshift.io/konflux-repo" : ($org + "/" + $repo),
+            },
             "envs": {
               "CONFIG_SPEC": $config,
             },

@@ -37,3 +37,7 @@ spec:
       value: RUN make build
     - name: DEPLOY_TEST_COMMAND
       value: "CLEANUP=true USE_OLM=false ./hack/deploy-and-e2e.sh"
+    - name: BUNDLE_NS
+      value: openshift-multiarch-tuning-operator
+    - name: BUNDLE_PRE_TEST_COMMAND
+      value: "oc apply -k ./deploy/envs/prow-konflux-bundle"

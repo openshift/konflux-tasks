@@ -7,6 +7,7 @@ This repository contains **Konflux tasks** for running parameterized prowjobs us
 To use these tasks, ensure you’ve completed the following:
 - You are **onboarded to the Konflux platform**.
 - You have added a **gangway token secret** to your Konflux tenant. The secret must contain a key named `token`.
+- It might be needed to define custom timeouts on the pipeline level for individual IntegrationTestScenarios, based on your test. The default is 2h. Check the [konflux documentation](https://konflux-ci.dev/docs/testing/integration/editing/) for more details.
 
 To get the token used to trigger prowjobs, run:
 ```
