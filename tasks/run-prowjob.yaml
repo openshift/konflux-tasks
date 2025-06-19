@@ -11,7 +11,7 @@ spec:
   - name: GANGWAY_TOKEN
     type: string
     default: gangway-token
-    description: Token to authenticate with gangway
+    description: 'Token to authenticate with gangway'
 
   # Test parameters
   - name: CLOUD_PROVIDER
@@ -21,11 +21,16 @@ spec:
   - name: OPENSHIFT_VERSION
     type: string
     default: '4.18'
-    description: 'OpenShift version to test against'
+    description: 'OpenShift version to test against; must be in the format 4.x; if you are using a stable, fast or candidate channel, you can specify 4.x.y'
+  - name: CHANNEL_STREAM
+    type: string
+    default: 'stable'
+    description: 'OpenShift stream/channel to test against; one of stable, fast, candidate, 4-stable, nightly, konflux-nightly, ci;
+     stable, fast and candidate are channels from the Cincinnati server, the other ones are streams from the release controller; always the latest version of the stream/channel will be used'
   - name: ARCHITECTURE
     type: string
     default: 'amd64'
-    description: 'Architecture to test against. amd64, arm64'
+    description: 'Architecture to test against; one of amd64, arm64'
 
   # Artifacts image parameters
   - name: ARTIFACTS_BUILD_ROOT
@@ -50,7 +55,7 @@ spec:
   - name: PULL_SECRET
     type: string
     default: ''
-    description: 'Secret created by the user in https://vault.ci.openshift.org/ in the test-credential namespace with the field .dockerconfigjson. Necessary for private images'
+    description: 'Secret created by the user in https://vault.ci.openshift.org/ in the test-credential namespace with the field .dockerconfigjson; necessary for private images'
   - name: ENVS
     type: string
     default: ''
@@ -77,6 +82,8 @@ spec:
       value: $(params.DEPLOY_TEST_COMMAND)
     - name: OPENSHIFT_VERSION
       value: $(params.OPENSHIFT_VERSION)
+    - name: CHANNEL_STREAM
+      value: $(params.CHANNEL_STREAM)
     - name: ARCHITECTURE
       value: $(params.ARCHITECTURE)
     - name: SNAPSHOT
@@ -142,8 +149,9 @@ spec:
       yq -i 'del(.build_root.project_image)' config.yaml
       yq -i 'del(.tests[].steps.test[].cli)' config.yaml
       yq -i '(.build_root.project_image += {"dockerfile_literal": strenv(DOCKERFILE_LITERAL) })' config.yaml
+
+      # Konflux Image
       KONFLUX_IMAGE=$(jq -r --arg component_name "${COMPONENT_NAME}" '.components[] | select(.name == $component_name) | .containerImage' <<< "${SNAPSHOT}")
-      # KONFLUX_IMAGE=$(jq -r -c '.components[0].containerImage' <<< "${SNAPSHOT}")
       TAG=$(echo "$KONFLUX_IMAGE" | cut -d':' -f2)
       RNN=$(echo "$KONFLUX_IMAGE" | cut -d':' -f1)
       NAME=$(echo "$RNN" | rev | cut -d'/' -f1 | rev)
@@ -156,18 +164,41 @@ spec:
       if [[ -n "$PULL_SECRET" ]]; then
         yq -i '(.external_images.konflux.pull_secret = "'${PULL_SECRET}'")' config.yaml
       fi
-      yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
-      yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
-      yq -i '(.releases.latest.release.channel = "stable")' config.yaml
 
+      # Release
+      if [[ $CHANNEL_STREAM == "stable" || $CHANNEL_STREAM == "fast" || $CHANNEL_STREAM == "candidate" ]]; then
+        yq -i '(.releases.latest.release.channel = "'${CHANNEL_STREAM}'")' config.yaml
+        yq -i '(.releases.latest.release.version = "'${OPENSHIFT_VERSION}'")' config.yaml
+        yq -i '(.releases.latest.release.architecture = "amd64")' config.yaml
+      elif [[ $CHANNEL_STREAM == "4-stable" ]]; then
+        minor=$(echo "$OPENSHIFT_VERSION" | cut -d. -f2)
+        minor_plus_one=$((minor + 1))
+        yq -i '(.releases.latest.prerelease.product = "ocp" )' config.yaml
+        yq -i '(.releases.latest.prerelease.architecture = "amd64")' config.yaml
+        yq -i '(.releases.latest.prerelease.version_bounds.lower = "4.'${minor}'.0-0")' config.yaml
+        yq -i '(.releases.latest.prerelease.version_bounds.upper = "4.'${minor_plus_one}'.0-0")' config.yaml
+        yq -i '(.releases.latest.prerelease.version_bounds.stream = "'${CHANNEL_STREAM}'")' config.yaml
+        yq -i 'del( .releases.latest.release)' config.yaml
+      elif [[ $CHANNEL_STREAM == "nightly" || $CHANNEL_STREAM == "konflux-nightly" || $CHANNEL_STREAM == "ci" ]]; then
+        yq -i '(.releases.latest.candidate.product = "ocp" )' config.yaml
+        yq -i '(.releases.latest.candidate.architecture = "amd64")' config.yaml
+        yq -i '(.releases.latest.candidate.stream = "'${CHANNEL_STREAM}'")' config.yaml
+        yq -i '(.releases.latest.candidate.version = "'${OPENSHIFT_VERSION}'")' config.yaml
+        yq -i 'del( .releases.latest.release)' config.yaml
+      else
+        echo "❌ Error: Invalid channel/stream specified. Use one of stable, fast, candidate, 4-stable, nightly, konflux-nightly, ci."
+        exit 1
+      fi
+
+      # Placeholders modifications
       sed -i "s|operator-placeholder|pipeline:konflux|g" config.yaml
       sed -i "s|operator-placeholder|pipeline:konflux|g" config.yaml
       sed -i "s|command-placeholder|$DEPLOY_TEST_COMMAND|g" config.yaml
 
       # Arch specific modifications
       if [[ $ARCHITECTURE == "arm64" ]]; then
+        yq -i '(.releases.latest.*.architecture = "multi")' config.yaml
         sed -i "s|amd64|arm64|g" config.yaml
-        yq -i '(.releases.latest.release.architecture = "multi")' config.yaml
       fi
 
       # ENV var modifications
