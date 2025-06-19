@@ -22,6 +22,31 @@ oc --context app.ci -n konflux-tp extract secret/gangway-token-dockercfg-wbq9f
     - Reference the pipeline you created.
     - Set the context to the specific component you want to test (remove the default application context).
 
+
+## Pipeline Flow
+The pipeline consists of the following tasks:
+- **run-prowjob**: This task triggers a prowjob based on the parameters you provide.
+- **report-prowjob-status**: This task waits for the prowjob to complete, checks its status and reports the result.
+
+## Parameters
+| name | description | default value | required |
+|------|-------------|----------------|----------|
+| SNAPSHOT | Snapshot of the application |  | true |
+| GANGWAY_TOKEN | Token to authenticate with gangway | gangway-token | false |
+| CLOUD_PROVIDER | Cloud provider to use for the test (one of aws, gcp, azure) | aws | false |
+| OPENSHIFT_VERSION | OpenShift version to test against; must be in the format 4.x; if you are using a stable, fast or candidate channel, you can specify 4.x.y | 4.18 | false |
+| CHANNEL_STREAM | OpenShift stream/channel to test against; one of stable, fast, candidate, 4-stable, nightly, konflux-nightly, ci; stable, fast and candidate are channels from the Cincinnati server, the other ones are streams from the release controller; always the latest version of the stream/channel will be used | stable | false |
+| ARCHITECTURE | Architecture to test against; one of amd64, arm64 | amd64 | false |
+| ARTIFACTS_BUILD_ROOT | Image to use for building the artifacts image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17 |  | true |
+| DOCKERFILE_ADDITIONS | Dockerfile additions to use for building the artifacts image, e.g. RUN make build |  | true |
+| DEPLOY_TEST_COMMAND | Command that deploys and tests the OPERATOR_IMAGE on the cluster, e.g. make deploy && make test |  | true |
+| BUNDLE_PRE_TEST_COMMAND | Only use with bundle image test! Pre-test command to run before the test, e.g. oc apply ... |  | false |
+| BUNDLE_NS | Namespace to use if installing bundle image |  | false |
+| PULL_SECRET | Secret created by the user in https://vault.ci.openshift.org/ in the test-credential namespace with the field .dockerconfigjson; necessary for private images |  | false |
+| ENVS | Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2 |  | false |
+
+
+
 ## ⚙️ How It Works
 The pipeline will trigger one of these prowjobs, depending on the specified parameters:
   - `periodic-ci-openshift-konflux-tasks-main-konflux-test-aws`
