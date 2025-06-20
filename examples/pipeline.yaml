@@ -31,6 +31,8 @@ spec:
       value: "gcp"
     - name: OPENSHIFT_VERSION
       value: "4.17"
+    - name: CHANNEL_STREAM
+      value: "4-stable"
     - name: ARTIFACTS_BUILD_ROOT
       value: quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.23-openshift-4.19
     - name: DOCKERFILE_ADDITIONS
