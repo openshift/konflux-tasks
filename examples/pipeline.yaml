@@ -23,7 +23,7 @@ spec:
       - name: revision
         value: main
       - name: pathInRepo
-        value: tasks/run-prowjob.yaml
+        value: tasks/run-prowjob/0.1/run-prowjob.yaml
     params:
     - name: SNAPSHOT
       value: $(params.SNAPSHOT)
