@@ -1,0 +1,75 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ephemeral-cluster
+spec:
+  description: >-
+    Provision and deprovision an ephemeral cluster in AWS.
+  tasks:
+  - name: provision-ephemeral-cluster
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/provision-ephemeral-cluster/0.1/provision-ephemeral-cluster.yaml
+    params:
+    - name: workflow
+      value: ipi-aws
+    - name: clusterProfile
+      value: my-cluster-profile
+    - name: releases
+      value: '{"initial":{"integration":{"name":"4.20","namespace":"ocp"}},"latest":{"integration":{"name":"4.20","namespace":"ocp"}}}'
+  - name: run-test
+    runAfter:
+    - provision-ephemeral-cluster
+    params:
+    - name: kubeconfigSecretRef
+      value: $(tasks.provision-ephemeral-cluster.results.secretRef)
+    taskSpec:
+      params:
+      - name: kubeconfigSecretRef
+        type: string
+        description: "The secret that holds the Ephemeral Cluster kubeconfig"
+      steps:
+      - name: run-test
+        image: registry.redhat.io/openshift4/ose-cli:4.13@sha256:73df37794ffff7de1101016c23dc623e4990810390ebdabcbbfa065214352c7c
+        env:
+        - name: KUBECONFIG_VALUE
+          valueFrom:
+            secretKeyRef:
+              name: $(params.kubeconfigSecretRef)
+              key: kubeconfig
+        script: |
+          #!/usr/bin/env bash
+          set -eo pipefail
+
+          KUBECONFIG="$(mktemp kubeconfig.XXXXX)"
+          trap 'rm -f "$KUBECONFIG"' EXIT
+
+          echo "$KUBECONFIG_VALUE" >"$KUBECONFIG"
+          export KUBECONFIG
+
+          oc whoami
+
+  finally:
+  - name: deprovision-ephemeral-cluster
+    runAfter:
+    - run-test
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/provision-ephemeral-cluster/0.1/deprovision-ephemeral-cluster.yaml
+    params:
+    - name: testPlatformClusterClaimName
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimName)
+    - name: testPlatformClusterClaimNamespace
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimNamespace)
