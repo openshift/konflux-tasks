@@ -1,0 +1,145 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: provision-ephemeral-cluster
+spec:
+  description: >-
+    Provision an ephemeral cluster by leveraging the Test Platform (OpenShift CI) infrastructure.
+  params:
+  - name: workflow
+    type: string
+    description: >-
+      The workflow that will be used to provision the cluster.
+      See https://steps.ci.openshift.org/#workflows for a complete list of any available workflow.
+  - name: env
+    type: object
+    default: []
+    description: >-
+      Environmental variables available in the OpenShift CI infrastructure at provisioning time.
+      This parameter is expected to be a valid JSON object.
+      What follow is an example that creates the "FOO" environment variable and assign the string "bar" to it:
+      {
+        "FOO": "bar"
+      }
+      The object structure is flat, no nested objects are allowed. The key-value pairs have to be strings.
+  - name: clusterProfile
+    type: string
+    description: >-
+      The cluster profile holds the IAM information for the account accountable for any resource created
+      in a cloud provider.
+      See https://docs.ci.openshift.org/docs/how-tos/adding-a-cluster-profile/ for more information.
+  - name: releases
+    type: string
+    description: >-
+      The OpenShift release payload specification that will be installed on the ephemeral cluster.
+      See https://docs.ci.openshift.org/docs/architecture/ci-operator/#describing-inclusion-in-an-openshift-release for more information.
+      This parameter is a string that is expected to be a valid JSON object.
+      As an example:
+      {
+        "initial": {
+          "integration": {
+            "name": "4.20",
+            "namespace": "ocp"
+          }
+        },
+        "latest": {
+          "integration": {
+            "name": "4.20",
+            "namespace": "ocp"
+          }
+        }
+      }
+  - name: resources
+    type: string
+    default: ""
+    description: >-
+      Set requests and limits on the containers involved in the ephemeral cluster provisioning procedure.
+      See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
+      This parameter is a string that is expected to be a valid JSON object.
+      Default values are defined as follow:
+      {
+        "*": {
+          "requests": {"cpu": "200m"},
+          "limits":   {"memory": "400Mi"},
+        }
+      }
+  - name: timeout
+    type: string
+    default: 2h
+    description: "Wait for the ephemeral cluster to be ready until this timeout is reached"
+  results:
+  - name: secretRef
+    description: Name of a Secret containing a kubeconfig used to access the provisioned ephemeral cluster.
+    type: string
+  - name: testPlatformClusterClaimName
+    description: Name of the TestPlatformCluster Claim that is used to request an ephemeral cluster
+    type: string
+  - name: testPlatformClusterClaimNamespace
+    description: Namespace of the TestPlatformCluster Claim that is used to request an ephemeral cluster
+    type: string
+  steps:
+  - name: provision-ephemeral-cluster
+    image: quay.io/konflux-ci/konflux-test:v1.4.31@sha256:a7cae9e96663e277a3904d0c78630508ddb6cc8eebaa912a840bd20f68dcaad1
+    env:
+      - name: WORKFLOW
+        value: $(params.workflow)
+      - name: ENV
+        value: $(params.env)
+      - name: CLUSTER_PROFILE
+        value: $(params.clusterProfile)
+      - name: RELEASES
+        value: $(params.releases)
+      - name: RESOURCES
+        value: $(params.resources)
+      - name: CLAIM_NAME
+        value: $(context.taskRun.name)
+      - name: NAMESPACE
+        value: $(context.taskRun.namespace)
+      - name: OWNER_KIND
+        value: $(params.ownerKind)
+      - name: OWNER_NAME
+        value: $(params.ownerName)
+      - name: OWNER_UID
+        value: $(params.ownerUid)
+      - name: SECRET
+        value: $(context.taskRun.name)-secret
+      - name: CLUSTER_READY_TIMEOUT
+        value: $(params.timeout)
+    script: |
+      #!/bin/bash
+      set -eo pipefail
+
+      cat <<EOF >testplatformcluster_claim.yaml
+      apiVersion: ci.openshift.org/v1alpha1
+      kind: TestPlatformCluster
+      metadata:
+        name: $CLAIM_NAME
+        namespace: $NAMESPACE
+        ownerReferences:
+        - apiVersion: tekton.dev/v1
+          kind: $OWNER_KIND
+          name: $OWNER_NAME
+          uid: $OWNER_UID
+      spec:
+        ciOperator:
+          releases: $RELEASES
+          resources: $RESOURCES
+          test:
+            clusterProfile: $CLUSTER_PROFILE
+            env: $ENV
+            workflow: $WORKFLOW
+        writeConnectionSecretToRef:
+          name: $SECRET
+      EOF
+
+      NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
+
+      if oc wait testplatformclusters.ci.openshift.org "$NAME" --for=condition=ClusterReady=true --timeout="$CLUSTER_READY_TIMEOUT"; then
+        echo "SecretRef: $SECRET"
+        echo -n "$SECRET" >"$(results.secretRef.path)"
+        echo -n "$CLAIM_NAME" >"$(results.testPlatformClusterClaimName.path)"
+        echo -n "$NAMESPACE" >"$(results.testPlatformClusterClaimNamespace.path)"
+      else
+        echo "Error: failed to provision the cluster"
+        exit 1
+      fi
