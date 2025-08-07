@@ -52,6 +52,10 @@ spec:
     type: string
     default: ''
     description: 'Namespace to use if installing bundle image'
+  - name: CATALOG_NS
+    type: string
+    default: ''
+    description: 'Namespace to use if installing catalog image'
   - name: PULL_SECRET
     type: string
     default: ''
@@ -112,6 +116,8 @@ spec:
       value: $(params.BUNDLE_PRE_TEST_COMMAND)
     - name: BUNDLE_NS
       value: $(params.BUNDLE_NS)
+    - name: CATALOG_NS
+      value: $(params.CATALOG_NS)
     - name: PULL_SECRET
       value: $(params.PULL_SECRET)
     - name: ENVS
@@ -144,7 +150,7 @@ spec:
       )
       export DOCKERFILE_LITERAL
 
-      # Modifiying ci-op config
+      # Modifying ci-op config
       curl -s https://raw.githubusercontent.com/openshift/release/refs/heads/master/ci-operator/config/openshift/konflux-tasks/openshift-konflux-tasks-main.yaml > config.yaml
       yq -i 'del(.build_root.project_image)' config.yaml
       yq -i 'del(.tests[].steps.test[].cli)' config.yaml
@@ -212,14 +218,23 @@ spec:
       fi
 
       # Chosing prowjob
-      if [[ $BUNDLE_NS != "" ]]; then
-        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-bundle"
-        sed -i "s|ns-placeholder|$BUNDLE_NS|g" config.yaml
+      update_config() {
+        ns=$1
+        test_type=$2
+        sed -i "s|ns-placeholder|$ns|g" config.yaml
         sed -i "s|optional-operators-ci-operator-sdk-aws|optional-operators-ci-operator-sdk-$CLOUD_PROVIDER|g" config.yaml
+        sed -i "s|optional-operators-ci-aws|optional-operators-ci-$CLOUD_PROVIDER|g" config.yaml
         cluster_profile=$(yq '( .tests[] | select(.as == "*'${CLOUD_PROVIDER}'*") |.steps.cluster_profile )' config.yaml)
         sed -i "s|cluster_profile: aws|cluster_profile: $cluster_profile|g" config.yaml
-        yq -i 'del( .tests[] | select(.as != "*bundle*") )' config.yaml
-        yq -i 'del(.tests[].steps.env.OO_INSTALL_MODE)' config.yaml
+        yq -i 'del( .tests[] | select(.as != "*'"${test_type}"'*") )' config.yaml
+      }
+
+      if [[ $BUNDLE_NS != "" ]]; then
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-bundle"
+        update_config "$BUNDLE_NS" "bundle"
+      elif [[ $CATALOG_NS != "" ]]; then
+        PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-catalog"
+        update_config "$CATALOG_NS" "catalog"
       elif [[ $CLOUD_PROVIDER == "gcp" ]]; then
         PROWJOB_NAME="periodic-ci-openshift-konflux-tasks-main-konflux-test-gcp"
         yq -i 'del( .tests[] | select(.as != "*gcp*") )' config.yaml
