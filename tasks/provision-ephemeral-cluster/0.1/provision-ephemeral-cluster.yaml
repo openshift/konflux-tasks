@@ -170,6 +170,65 @@ spec:
       #!/bin/bash
       set -eo pipefail
 
+      # Use this to make sure the PJ URL is printed only once
+      URL_DUMPED=0
+      TP_CLUSTER_NAME=''
+
+      check_cluster_ready() {
+          ec="$1"
+
+          pj_url=$(jq -r '.status.prowJobURL' <<<"$ec")
+          if [ ! -z "$pj_url" -a $URL_DUMPED -eq 0 ]; then
+              echo "ProwJob URL: $pj_url"
+              URL_DUMPED=1
+          fi
+
+          phase=$(jq -r '.status.phase' <<<"$ec")
+          if [ "$phase" = "Failed" ]; then
+              echo "Error: failed to provision the cluster"
+              exit 1
+          fi
+
+          cluster_ready=$(jq -r 'any(.status.conditions[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
+          if [ "$cluster_ready" = "true" ]; then
+              echo "The cluster is ready"
+              echo "SecretRef: $SECRET"
+              echo -n "$SECRET" >"$(results.secretRef.path)"
+              echo -n "$CLAIM_NAME" >"$(results.testPlatformClusterClaimName.path)"
+              echo -n "$NAMESPACE" >"$(results.testPlatformClusterClaimNamespace.path)"
+              exit 0
+          fi
+      }
+
+      watch_ephemeral_cluster() {
+          # Use a named pipe instead of `oc get -w | while ...; do ... done` because it seems that,
+          # by using an anonymous pipe `|`, the script doesn't terminate when executing `exit 1`
+          ec_stream="$(mktemp --dry-run --tmpdir=/tmp)"
+          mkfifo "$ec_stream"
+
+          oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" --watch -o json >"$ec_stream" &
+
+          # `oc watch -o json` streams pretty-printed json objects, hence we have to read its output
+          # line by line and stops when an object has been fully dumped. We consider an object to
+          # be fully dumped when we find a line matching this regex: '^\}$'.
+          json=''
+          while IFS= read -r line; do
+              json=$(echo -E "${json}${line}")
+              if grep -qP '^\}$' <<<"$line"; then
+                  check_cluster_ready "$json"
+                  json=''
+              fi
+          done <"$ec_stream"
+      }
+
+      # `start_timeout` is supposed to run as a subprocess. When the `sleep` is done, kill the parent,
+      # that is this script.
+      start_timeout() {
+          sleep $CLUSTER_READY_TIMEOUT
+          echo "Timed out: cluster has not come up in $CLUSTER_READY_TIMEOUT"
+          kill $$
+      }
+
       cat <<EOF >testplatformcluster_claim.yaml
       apiVersion: ci.openshift.org/v1alpha1
       kind: TestPlatformCluster
@@ -202,14 +261,8 @@ spec:
           name: $SECRET
       EOF
 
-      NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
+      TP_CLUSTER_NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
 
-      if oc wait testplatformclusters.ci.openshift.org "$NAME" --for=condition=ClusterReady=true --timeout="$CLUSTER_READY_TIMEOUT"; then
-        echo "SecretRef: $SECRET"
-        echo -n "$SECRET" >"$(results.secretRef.path)"
-        echo -n "$CLAIM_NAME" >"$(results.testPlatformClusterClaimName.path)"
-        echo -n "$NAMESPACE" >"$(results.testPlatformClusterClaimNamespace.path)"
-      else
-        echo "Error: failed to provision the cluster"
-        exit 1
-      fi
+      start_timeout &
+      watch_ephemeral_cluster
+
