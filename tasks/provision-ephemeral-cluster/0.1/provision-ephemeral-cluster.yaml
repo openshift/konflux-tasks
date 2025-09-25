@@ -6,6 +6,40 @@ spec:
   description: >-
     Provision an ephemeral cluster by leveraging the Test Platform (OpenShift CI) infrastructure.
   params:
+  - name: buildRoot
+    type: string
+    description: >-
+      This is going to be used as a `build_root` for the resulting ci-operator configuration.
+      See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
+      This parameter is a string that is expected to be a valid JSON object.
+      As an example:
+      {
+        "image_stream_tag": {
+          "name": "release",
+          "namespace": "openshift",
+          "tag": "rhel-9-release-golang-1.24-openshift-4.20"
+        }
+      }
+  - name: baseImages
+    type: string
+    description: >-
+      This is going to be used as `base_images` for the resulting ci-operator configuration.
+      See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
+      This parameter is a string that is expected to be a valid JSON object.
+      As an example:
+      {
+        "ocp_4.20_base-rhel9": {
+          "name": "4.20",
+          "namespace": "ocp",
+          "tag": "base-rhel9"
+        }
+      }
+  - name: externalImages
+    type: string
+    description: >-
+      This is going to be used as `external_images` for the resulting ci-operator configuration.
+      See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
+      This parameter is a string that is expected to be a valid JSON object.
   - name: workflow
     type: string
     description: >-
@@ -28,6 +62,25 @@ spec:
       The cluster profile holds the IAM information for the account accountable for any resource created
       in a cloud provider.
       See https://docs.ci.openshift.org/docs/how-tos/adding-a-cluster-profile/ for more information.
+  - name: clusterClaim
+    type: string
+    description: >-
+      The claim specifictions to provision an cluster from Hive.
+      See https://docs.ci.openshift.org/docs/how-tos/cluster-claim/ for more information.
+      This parameter is a string that is expected to be a valid JSON object.
+      As an example:
+      {
+        "architecture": "amd64",
+        "as": "unused",
+        "cloud": "aws",
+        "labels": {
+          "region": "us-east-1"
+        },
+        "owner": "openshift-ci",
+        "product": "ocp",
+        "timeout": "1h0m0s",
+        "version": "4.19"
+      }
   - name: releases
     type: string
     description: >-
@@ -69,7 +122,7 @@ spec:
     description: "Wait for the ephemeral cluster to be ready until this timeout is reached"
   results:
   - name: secretRef
-    description: Name of a Secret containing a kubeconfig used to access the provisioned ephemeral cluster.
+    description: Name of a Secret containing kubeconfig and password to access the provisioned ephemeral cluster.
     type: string
   - name: testPlatformClusterClaimName
     description: Name of the TestPlatformCluster Claim that is used to request an ephemeral cluster
@@ -81,12 +134,20 @@ spec:
   - name: provision-ephemeral-cluster
     image: quay.io/konflux-ci/konflux-test:v1.4.31@sha256:a7cae9e96663e277a3904d0c78630508ddb6cc8eebaa912a840bd20f68dcaad1
     env:
+      - name: BUILD_ROOT
+        value: $(params.buildRoot)
+      - name: BASE_IMAGES
+        value: $(params.baseImages)
+      - name: EXTERNAL_IMAGES
+        value: $(params.externalImages)
       - name: WORKFLOW
         value: $(params.workflow)
       - name: ENV
         value: $(params.env)
       - name: CLUSTER_PROFILE
         value: $(params.clusterProfile)
+      - name: CLUSTER_CLAIM
+        value: $(params.clusterClaim)
       - name: RELEASES
         value: $(params.releases)
       - name: RESOURCES
@@ -109,10 +170,74 @@ spec:
       #!/bin/bash
       set -eo pipefail
 
+      # Use this to make sure the PJ URL is printed only once
+      URL_DUMPED=0
+      TP_CLUSTER_NAME=''
+
+      check_cluster_ready() {
+          ec="$1"
+
+          pj_url=$(jq -r '.status.prowJobURL' <<<"$ec")
+          if [ ! -z "$pj_url" -a $URL_DUMPED -eq 0 ]; then
+              echo "ProwJob URL: $pj_url"
+              URL_DUMPED=1
+          fi
+
+          phase=$(jq -r '.status.phase' <<<"$ec")
+          if [ "$phase" = "Failed" ]; then
+              echo "Error: failed to provision the cluster"
+              exit 1
+          fi
+
+          cluster_ready=$(jq -r 'any(.status.conditions[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
+          if [ "$cluster_ready" = "true" ]; then
+              echo "The cluster is ready"
+              echo "SecretRef: $SECRET"
+              echo -n "$SECRET" >"$(results.secretRef.path)"
+              echo -n "$CLAIM_NAME" >"$(results.testPlatformClusterClaimName.path)"
+              echo -n "$NAMESPACE" >"$(results.testPlatformClusterClaimNamespace.path)"
+              exit 0
+          fi
+      }
+
+      watch_ephemeral_cluster() {
+          # Use a named pipe instead of `oc get -w | while ...; do ... done` because it seems that,
+          # by using an anonymous pipe `|`, the script doesn't terminate when executing `exit 1`
+          ec_stream="$(mktemp --dry-run --tmpdir=/tmp)"
+          mkfifo "$ec_stream"
+
+          oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" --watch -o json >"$ec_stream" &
+
+          # `oc watch -o json` streams pretty-printed json objects, hence we have to read its output
+          # line by line and stops when an object has been fully dumped. We consider an object to
+          # be fully dumped when we find a line matching this regex: '^\}$'.
+          json=''
+          while IFS= read -r line; do
+              json=$(echo -E "${json}${line}")
+              if grep -qP '^\}$' <<<"$line"; then
+                  check_cluster_ready "$json"
+                  json=''
+              fi
+          done <"$ec_stream"
+      }
+
+      # `start_timeout` is supposed to run as a subprocess. When the `sleep` is done, kill the parent,
+      # that is this script.
+      start_timeout() {
+          sleep $CLUSTER_READY_TIMEOUT
+          echo "Timed out: cluster has not come up in $CLUSTER_READY_TIMEOUT"
+          kill $$
+      }
+
       cat <<EOF >testplatformcluster_claim.yaml
       apiVersion: ci.openshift.org/v1alpha1
       kind: TestPlatformCluster
       metadata:
+        annotations:
+          "ephemeralcluster.ci.openshift.io/pr-event-payload": |
+            {{ body }}
+          "ephemeralcluster.ci.openshift.io/pr-event-headers": |
+            {{ headers }}
         name: $CLAIM_NAME
         namespace: $NAMESPACE
         ownerReferences:
@@ -122,24 +247,22 @@ spec:
           uid: $OWNER_UID
       spec:
         ciOperator:
+          buildRoot: $BUILD_ROOT
+          baseImages: $BASE_IMAGES
+          externalImages: $EXTERNAL_IMAGES
           releases: $RELEASES
           resources: $RESOURCES
           test:
             clusterProfile: $CLUSTER_PROFILE
+            clusterClaim: $CLUSTER_CLAIM
             env: $ENV
             workflow: $WORKFLOW
         writeConnectionSecretToRef:
           name: $SECRET
       EOF
 
-      NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
+      TP_CLUSTER_NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
 
-      if oc wait testplatformclusters.ci.openshift.org "$NAME" --for=condition=ClusterReady=true --timeout="$CLUSTER_READY_TIMEOUT"; then
-        echo "SecretRef: $SECRET"
-        echo -n "$SECRET" >"$(results.secretRef.path)"
-        echo -n "$CLAIM_NAME" >"$(results.testPlatformClusterClaimName.path)"
-        echo -n "$NAMESPACE" >"$(results.testPlatformClusterClaimNamespace.path)"
-      else
-        echo "Error: failed to provision the cluster"
-        exit 1
-      fi
+      start_timeout &
+      watch_ephemeral_cluster
+

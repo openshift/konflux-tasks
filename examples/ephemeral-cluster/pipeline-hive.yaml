@@ -1,0 +1,82 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ephemeral-cluster
+spec:
+  description: >-
+    Provision and deprovision a cluster from Hive.
+  tasks:
+  - name: provision-ephemeral-cluster
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/provision-ephemeral-cluster/0.1/provision-ephemeral-cluster.yaml
+    params:
+    - name: workflow
+      value: generic-claim
+    - name: clusterClaim
+      value: '{"architecture":"amd64","as":"unused","cloud":"aws","labels":{"region":"us-east-1"},"owner":"openshift-ci","product":"ocp","timeout":"1h0m0s","version":"4.19"}'
+  - name: run-test
+    runAfter:
+    - provision-ephemeral-cluster
+    params:
+    - name: clusterCredentialsSecretRef
+      value: $(tasks.provision-ephemeral-cluster.results.secretRef)
+    taskSpec:
+      params:
+      - name: clusterCredentialsSecretRef
+        type: string
+        description: "The secret that holds the cluster credentials"
+      steps:
+      - name: run-test
+        image: registry.redhat.io/openshift4/ose-cli:4.13@sha256:73df37794ffff7de1101016c23dc623e4990810390ebdabcbbfa065214352c7c
+        env:
+        - name: KUBECONFIG_VALUE
+          valueFrom:
+            secretKeyRef:
+              name: $(params.clusterCredentialsSecretRef)
+              key: kubeconfig
+        - name: ADMIN_PASSWD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.clusterCredentialsSecretRef)
+              key: kubeAdminPassword
+        script: |
+          #!/usr/bin/env bash
+          set -eo pipefail
+
+          KUBECONFIG="$(mktemp kubeconfig.XXXXX)"
+          trap 'rm -f "$KUBECONFIG"' EXIT
+
+          echo "$KUBECONFIG_VALUE" >"$KUBECONFIG"
+          export KUBECONFIG
+          oc whoami
+
+          kk="$KUBECONFIG"
+          unset KUBECONFIG
+          oc login --insecure-skip-tls-verify -u kubeadmin -p "$(cat passwd)" "$(yq '.clusters[0].cluster.server' $kk | sed 's|https://||g')"
+          oc whoami
+
+  finally:
+  - name: deprovision-ephemeral-cluster
+    runAfter:
+    - run-test
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/provision-ephemeral-cluster/0.1/deprovision-ephemeral-cluster.yaml
+    params:
+    - name: testPlatformClusterClaimName
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimName)
+    - name: testPlatformClusterClaimNamespace
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimNamespace)
