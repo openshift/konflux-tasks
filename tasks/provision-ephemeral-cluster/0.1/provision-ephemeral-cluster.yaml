@@ -6,8 +6,27 @@ spec:
   description: >-
     Provision an ephemeral cluster by leveraging the Test Platform (OpenShift CI) infrastructure.
   params:
+  - name: ownerKind
+    type: string
+    default: PipelineRun
+    description: >-
+      The type of resource that should own the generated ephemeral cluster claim.
+      Supported values: `PipelineRun`, `TaskRun`.
+  - name: ownerName
+    type: string
+    description: >-
+      The name of the resource that should own the ephemeral cluster claim.
+      This should either be passed the value of `$(context.pipelineRun.name)`
+      or `$(context.taskRun.name)` depending on the value of `ownerKind`.
+  - name: ownerUid
+    type: string
+    description: >-
+      The uid of the resource that should own the ephemeral cluster claim.
+      This should either be passed the value of `$(context.pipelineRun.uid)`
+      or `$(context.taskRun.uid)` depending on the value of `ownerKind`.
   - name: buildRoot
     type: string
+    default: '{}'
     description: >-
       This is going to be used as a `build_root` for the resulting ci-operator configuration.
       See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
@@ -22,6 +41,7 @@ spec:
       }
   - name: baseImages
     type: string
+    default: '{}'
     description: >-
       This is going to be used as `base_images` for the resulting ci-operator configuration.
       See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
@@ -36,6 +56,7 @@ spec:
       }
   - name: externalImages
     type: string
+    default: '{}'
     description: >-
       This is going to be used as `external_images` for the resulting ci-operator configuration.
       See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
@@ -58,12 +79,14 @@ spec:
       The object structure is flat, no nested objects are allowed. The key-value pairs have to be strings.
   - name: clusterProfile
     type: string
+    default: ""
     description: >-
       The cluster profile holds the IAM information for the account accountable for any resource created
       in a cloud provider.
       See https://docs.ci.openshift.org/docs/how-tos/adding-a-cluster-profile/ for more information.
   - name: clusterClaim
     type: string
+    default: '{}'
     description: >-
       The claim specifictions to provision an cluster from Hive.
       See https://docs.ci.openshift.org/docs/how-tos/cluster-claim/ for more information.
@@ -83,6 +106,7 @@ spec:
       }
   - name: releases
     type: string
+    default: '{}'
     description: >-
       The OpenShift release payload specification that will be installed on the ephemeral cluster.
       See https://docs.ci.openshift.org/docs/architecture/ci-operator/#describing-inclusion-in-an-openshift-release for more information.
