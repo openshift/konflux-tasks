@@ -67,8 +67,8 @@ spec:
       The workflow that will be used to provision the cluster.
       See https://steps.ci.openshift.org/#workflows for a complete list of any available workflow.
   - name: env
-    type: object
-    default: []
+    type: string
+    default: '{}'
     description: >-
       Environmental variables available in the OpenShift CI infrastructure at provisioning time.
       This parameter is expected to be a valid JSON object.
