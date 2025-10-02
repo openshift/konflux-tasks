@@ -26,7 +26,7 @@ spec:
       or `$(context.taskRun.uid)` depending on the value of `ownerKind`.
   - name: buildRoot
     type: string
-    default: '{}'
+    default: '{"image_stream_tag":{"name":"release","namespace":"openshift","tag":"rhel-9-release-golang-1.24-openshift-4.20"}}'
     description: >-
       This is going to be used as a `build_root` for the resulting ci-operator configuration.
       See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information.
