@@ -1,0 +1,224 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: provide-prowjob
+spec:
+  description: >-
+  params:
+  - name: SNAPSHOT
+    description: 'Snapshot of the application'
+  - name: GANGWAY_TOKEN
+    type: string
+    default: gangway-token
+    description: 'Token to authenticate with gangway'
+  - name: PROWJOB_NAME
+    type: string
+    description: 'Name of the Prow job to trigger'
+  - name: IMAGE_IN_CONFIG
+    type: string
+    description: 'Name of the image in the ci-operator config to replace with the konflux image, e.g. konflux'
+  - name: VARIANT
+    type: string
+    description: 'ci-operator config variant to use, e.g. ocp416'
+    # Artifacts image parameters
+  - name: ARTIFACTS_BUILD_ROOT
+    type: string
+    description: 'Image to use for building the artifacts image, e.g. quay-proxy.ci.openshift.org/openshift/ci:ocp_builder_rhel-9-golang-1.22-openshift-4.17'
+  - name: DOCKERFILE_ADDITIONS
+    type: string
+    description: 'Dockerfile additions to use for building the artifacts image, similar to binary_build_commands in ci-operator, e.g. RUN make build'
+    # Options to include/exclude images/operator stanza in the ci-operator config
+  - name: INCLUDE_IMAGES
+    type: string
+    description: '0 (false) or 1 (true) whether to include `images` stanza in the ci-operator config, default 0'
+    default: "0"
+  - name: INCLUDE_OPERATOR
+    type: string
+    description: '0 (false) or 1 (true) whether to include `operator` stanza in the ci-operator config, default 0'
+    default: "0"
+  results:
+  - name: PROWJOB_ID
+    description: The triggered prowjob id
+  - name: PROWJOB_URL
+    description: The prowjob url to spyglass
+  - name: PROWJOB_STATUS
+    description: The status of the prowjob
+  steps:
+  - name: run-prowjob
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    env:
+    - name: GANGWAY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: $(params.GANGWAY_TOKEN)
+          key: token
+    - name: SNAPSHOT
+      value: $(params.SNAPSHOT)
+    - name: ORG
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/url-org']
+    - name: REPO
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/url-repository']
+    - name: COMMIT
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/sha']
+    - name: TARGET_BRANCH
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/branch']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['appstudio.openshift.io/component']
+    - name: ARTIFACTS_BUILD_ROOT
+      value: $(params.ARTIFACTS_BUILD_ROOT)
+    - name: DOCKERFILE_ADDITIONS
+      value: $(params.DOCKERFILE_ADDITIONS)
+    - name: PROWJOB_NAME
+      value: $(params.PROWJOB_NAME)
+    - name: IMAGE_IN_CONFIG
+      value: $(params.IMAGE_IN_CONFIG)
+    - name: VARIANT
+      value: $(params.VARIANT)
+    - name: INCLUDE_IMAGES
+      value: $(params.INCLUDE_IMAGES)
+    - name: INCLUDE_OPERATOR
+      value: $(params.INCLUDE_OPERATOR)
+    script: |
+      #!/usr/bin/env bash
+
+      # Getting tooling
+      dnf install wget jq -y --quiet > /dev/null
+      VERSION=v4.45.1
+      BINARY=yq_linux_amd64
+      wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} --quiet -O /usr/bin/yq &&\
+      chmod +x /usr/bin/yq
+
+      # Artifacts Dockerfile
+      DOCKERFILE_LITERAL=$(cat <<EOF
+      FROM ${ARTIFACTS_BUILD_ROOT}
+      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/oc /bin/oc
+      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/kubectl /bin/kubectl
+      RUN umask 0002
+      WORKDIR /workspace
+      RUN curl -L -o repo.zip "https://github.com/${ORG}/${REPO}/archive/${COMMIT}.zip" && unzip repo.zip
+      WORKDIR /workspace/${REPO}-${COMMIT}
+      ${DOCKERFILE_ADDITIONS}
+      RUN find /workspace -type d -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /workspace -type f -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /go -type d -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      RUN find /go -type f -not -perm -0777 | xargs --max-procs 10 --max-args 100 --no-run-if-empty chmod 777
+      EOF
+      )
+      export DOCKERFILE_LITERAL
+
+      if [[ -z "$VARIANT" ]]; then
+        CI_OPERATOR_CONFIG=$(curl -sSL https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/"${ORG}-${REPO}-${TARGET_BRANCH}.yaml")
+      else
+        CI_OPERATOR_CONFIG=$(curl -sSL https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/"${ORG}-${REPO}-${TARGET_BRANCH}__${VARIANT}.yaml")
+      fi
+
+      # Konflux Image
+      KONFLUX_IMAGE=$(jq -r --arg component_name "${COMPONENT_NAME}" '.components[] | select(.name == $component_name) | .containerImage' <<< "${SNAPSHOT}")
+      TAG=$(echo "$KONFLUX_IMAGE" | cut -d':' -f2)
+      RNN=$(echo "$KONFLUX_IMAGE" | cut -d':' -f1)
+      NAME=$(echo "$RNN" | rev | cut -d'/' -f1 | rev)
+      NAMESPACE=$(echo "$RNN" | rev | cut -d'/' -f2 | rev)
+      REGISTRY=$(echo "$RNN" | rev | cut -d'/' -f3- | rev)
+
+      # Modifying ci-op config
+      echo "$CI_OPERATOR_CONFIG" > config.yaml
+      if [[ "$INCLUDE_IMAGES" == "0" ]]; then
+        yq -i 'del(.images)' config.yaml
+      fi
+      if [[ "$INCLUDE_OPERATOR" == "0" ]]; then
+        yq -i 'del(.operator)' config.yaml
+      fi
+      yq -i '(.build_root.project_image += {"dockerfile_literal": strenv(DOCKERFILE_LITERAL) })' config.yaml
+      yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".registry = "'${REGISTRY}'")' config.yaml
+      yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".namespace = "'${NAMESPACE}'")' config.yaml
+      yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".name = "'${NAME}'")' config.yaml
+      yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".tag = "'${TAG}'")' config.yaml
+
+      yq -o=json config.yaml | jq -Rs . > config.json
+      payload=$(jq -n --arg job "$PROWJOB_NAME" --arg org "$ORG" --arg repo "$REPO" \
+        --argjson config "$(cat config.json)" \
+        '{
+            "job_name": $job,
+            "job_execution_type": "1",
+            "pod_spec_options": {
+              "annotations": {
+                "ci.openshift.io/konflux-repo" : ($org + "/" + $repo),
+              },
+              "envs": {
+                "UNRESOLVED_CONFIG": $config
+              },
+              }
+          }')
+
+
+      # Triggering PJ via gangway and getting ID/URL
+      curl -s -X POST -H "Authorization: Bearer $GANGWAY_TOKEN" \
+      -H "Content-Type: application/json" -d "$payload" \
+      https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions >output.json
+      PROWJOB_ID=$(jq -r '.id // empty' output.json)
+      if [[ -z "$PROWJOB_ID" ]]; then
+        echo "❌ Error: Failed to extract job ID from response."
+        echo "👉 Probably expired gangway token."
+        exit 1
+      fi
+
+      # Getting the prowjob spyglass URL
+      while true; do
+        sleep 10
+        curl -s https://prow.ci.openshift.org/prowjob?prowjob=$PROWJOB_ID >pj.yaml
+        PROWJOB_URL=$(yq eval '.status.url // ""' pj.yaml)
+        if [[ -n "$PROWJOB_URL" ]]; then
+          break
+        fi
+      done
+
+      echo -n "${PROWJOB_ID}" | tee $(results.PROWJOB_ID.path)
+      echo
+      echo -n "🔗 "
+      echo -n "${PROWJOB_URL}" | tee $(results.PROWJOB_URL.path)
+  - name: report-prowjob-status
+    image: registry.access.redhat.com/ubi9/ubi:latest
+    env:
+    - name: PROWJOB_ID_PATH
+      value: $(results.PROWJOB_ID.path)
+    - name: GANGWAY_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: $(params.GANGWAY_TOKEN)
+          key: token
+    script: |
+      #!/usr/bin/env bash
+      dnf install jq -y --quiet > /dev/null
+      PROWJOB_ID=$(cat $PROWJOB_ID_PATH)
+      while true; do
+        curl -s -H "Authorization: Bearer $GANGWAY_TOKEN" \
+        https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions/$PROWJOB_ID >output.json
+        if ! jq empty output.json 2>/dev/null; then
+          sleep 30
+          continue
+        fi
+        STATUS=$(cat output.json | jq '.job_status')
+        if [ "$STATUS" == "\"SUCCESS"\" ]; then
+          PROWJOB_STATUS="$STATUS"
+          echo "✅ "
+          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          exit 0
+        fi
+        if [ "$STATUS" == "\"FAILURE"\" ] || [ "$STATUS" == "\"ABORTED"\" ] || [ "$STATUS" == "\"ERROR"\" ]; then
+          PROWJOB_STATUS="$STATUS"
+          echo "❌ "
+          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          exit 1
+        fi
+        sleep 30
+      done

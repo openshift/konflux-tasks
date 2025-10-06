@@ -15,7 +15,7 @@ oc --context app.ci -n konflux-tp extract secret/gangway-token-dockercfg-wbq9f
 
 
 ## 🛠️ Usage
-1. **Create a pipeline** in your repository based on the [`/examples/pipeline.yaml`](/examples/pipeline.yaml) file.
+1. **Create a pipeline** in your repository based on the [`/examples/pipeline.yaml`](/examples/run-prowjob/pipeline.yaml) file.
 2. **Define an integration-test** in your Konflux tenant:
     - Reference the pipeline you created.
     - Set the context to the specific component you want to test (remove the default application context).

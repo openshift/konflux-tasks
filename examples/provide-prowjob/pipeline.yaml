@@ -1,0 +1,45 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: provide-prowjob
+spec:
+  description: >-
+    Run a parameterized prowjob using gangway.
+  params:
+    - name: GANGWAY_TOKEN
+      type: string
+      description: Token to authenticate with gangway
+      default: gangway-token
+    - description: 'Snapshot of the application'
+      name: SNAPSHOT
+      default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
+      type: string
+  tasks:
+    - name: provide-prowjob
+      displayName: "Running prowjob $(params.PROWJOB_NAME)"
+      taskRef:
+        resolver: git
+        params:
+        - name: url
+          value: https://github.com/openshift/konflux-tasks
+        - name: revision
+          value: main
+        - name: pathInRepo
+          value: tasks/provide-prowjob/0.1/provide-prowjob.yaml
+      params:
+        - name: SNAPSHOT
+          value: $(params.SNAPSHOT)
+        - name: ARTIFACTS_BUILD_ROOT
+          value: "quay-proxy.ci.openshift.org/openshift/ci:openshift_release_golang-1.22"
+        - name: DOCKERFILE_ADDITIONS
+          value: "RUN make build"
+        - name: PROWJOB_NAME
+          value: periodic-ci-openshift-multiarch-tuning-operator-main-ocp418-e2e-aws-ovn-proxy-mto-origin
+        - name: VARIANT
+          value: ocp418
+        - name: IMAGE_IN_CONFIG
+          value: multiarch-tuning-operator-bundle
+        - name: INCLUDE_IMAGES
+          value: "1"
+        - name: INCLUDE_OPERATOR
+          value: "1"
