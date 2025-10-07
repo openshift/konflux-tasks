@@ -213,19 +213,19 @@ spec:
       check_cluster_ready() {
           ec="$1"
 
-          pj_url=$(jq -r '.status.prowJobURL' <<<"$ec")
+          pj_url=$(jq -r '(.status.conditions // [])[]|select(.type == "_ProwJobURL").message' <<<"$ec")
           if [ ! -z "$pj_url" -a "$pj_url" != "null" -a $URL_DUMPED -eq 0 ]; then
               echo "ProwJob URL: $pj_url"
               URL_DUMPED=1
           fi
 
-          phase=$(jq -r '.status.phase' <<<"$ec")
+          phase=$(jq -r '(.status.conditions // [])[]|select(.type == "_EphemeralClusterPhase").message' <<<"$ec")
           if [ "$phase" = "Failed" ]; then
               echo "Error: failed to provision the cluster"
               exit 1
           fi
 
-          cluster_ready=$(jq -r 'any(.status.conditions[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
+          cluster_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
           if [ "$cluster_ready" = "true" ]; then
               echo "The cluster is ready"
               echo "SecretRef: $SECRET"
