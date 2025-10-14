@@ -36,6 +36,10 @@ spec:
     type: string
     description: '0 (false) or 1 (true) whether to include `operator` stanza in the ci-operator config, default 0'
     default: "0"
+  - name: ENVS
+    type: string
+    default: ''
+    description: 'Optional environment variables to inject into the test; separated by commas; e.g. VAR1=val1,VAR2=val2'
   results:
   - name: PROWJOB_ID
     description: The triggered prowjob id
@@ -88,6 +92,8 @@ spec:
       value: $(params.INCLUDE_IMAGES)
     - name: INCLUDE_OPERATOR
       value: $(params.INCLUDE_OPERATOR)
+    - name: ENVS
+      value: $(params.ENVS)
     script: |
       #!/usr/bin/env bash
 
@@ -101,8 +107,6 @@ spec:
       # Artifacts Dockerfile
       DOCKERFILE_LITERAL=$(cat <<EOF
       FROM ${ARTIFACTS_BUILD_ROOT}
-      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/oc /bin/oc
-      COPY --from=quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_cli /bin/kubectl /bin/kubectl
       RUN umask 0002
       WORKDIR /workspace
       RUN curl -L -o repo.zip "https://github.com/${ORG}/${REPO}/archive/${COMMIT}.zip" && unzip repo.zip
@@ -132,6 +136,8 @@ spec:
 
       # Modifying ci-op config
       echo "$CI_OPERATOR_CONFIG" > config.yaml
+      yq -i 'del(.build_root.project_image)' config.yaml
+      yq -i 'del(.build_root.from_repository)' config.yaml
       if [[ "$INCLUDE_IMAGES" == "0" ]]; then
         yq -i 'del(.images)' config.yaml
       fi
@@ -143,6 +149,16 @@ spec:
       yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".namespace = "'${NAMESPACE}'")' config.yaml
       yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".name = "'${NAME}'")' config.yaml
       yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".tag = "'${TAG}'")' config.yaml
+
+      # ENV var modifications
+      if [[ -n "$ENVS" ]]; then
+        IFS=',' read -ra PAIRS <<< "$ENVS"
+        for pair in "${PAIRS[@]}"; do
+          KEY=$(echo "$pair" | cut -d'=' -f1)
+          VALUE=$(echo "$pair" | cut -d'=' -f2-)
+          yq -i '.tests[].steps.env."'"${KEY}"'" = "'"${VALUE}"'"' config.yaml
+        done
+      fi
 
       yq -o=json config.yaml | jq -Rs . > config.json
       payload=$(jq -n --arg job "$PROWJOB_NAME" --arg org "$ORG" --arg repo "$REPO" \
