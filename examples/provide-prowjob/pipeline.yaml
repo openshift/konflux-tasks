@@ -43,3 +43,5 @@ spec:
           value: "1"
         - name: INCLUDE_OPERATOR
           value: "1"
+        - name: ENVS
+          value: "TEST_ENV=example,ANOTHER_ENV=example2"

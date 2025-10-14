@@ -36,6 +36,7 @@ The pipeline consists of the following tasks:
 | DOCKERFILE_ADDITIONS | Dockerfile additions to use for building the artifacts image, e.g. RUN make build |  | true |
 | INCLUDE_IMAGES | Bool flag whether to include the `images` stanza in the ci-operator config | 0 | false |
 | INCLUDE_OPERATOR | Bool flag whether to include the `operator` stanza in the ci-operator config | 0 | false |
+| ENVS | Comma-separated list of additional environment variables to pass to the prowjob, e.g. TEST_ENV=example,ANOTHER_ENV=example2 |  | false |
 
 ## ⚙️ How It Works
 Patch ci-operator Config:
