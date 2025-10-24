@@ -76,7 +76,7 @@ spec:
     - name: TARGET_BRANCH
       valueFrom:
         fieldRef:
-          fieldPath: metadata.labels['pac.test.appstudio.openshift.io/branch']
+          fieldPath: metadata.annotations['pac.test.appstudio.openshift.io/branch']
     - name: COMPONENT_NAME
       valueFrom:
         fieldRef:
