@@ -289,15 +289,25 @@ spec:
         }')
 
       # Triggering PJ via gangway and getting ID/URL
-      curl -s -X POST -H "Authorization: Bearer $GANGWAY_TOKEN" \
-      -H "Content-Type: application/json" -d "$payload" \
-      https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions >output.json
-      PROWJOB_ID=$(jq -r '.id // empty' output.json)
-      if [[ -z "$PROWJOB_ID" ]]; then
-        echo "❌ Error: Failed to extract job ID from response."
-        echo "👉 Probably expired gangway token."
-        exit 1
-      fi
+      MAX_RETRIES=3
+      RETRY_COUNT=0
+      while true; do
+        curl -s -X POST -H "Authorization: Bearer $GANGWAY_TOKEN" \
+        -H "Content-Type: application/json" -d "$payload" \
+        https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions >output.json
+        PROWJOB_ID=$(jq -r '.id // empty' output.json)
+        if [[ -n "$PROWJOB_ID" ]]; then
+          break
+        fi
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+          echo "❌ Error: Failed to extract job ID from response after $MAX_RETRIES attempts."
+          echo "👉 Probably expired gangway token or Gangway service is down."
+          exit 1
+        fi
+        echo "Retry $RETRY_COUNT/$MAX_RETRIES: Failed to trigger prowjob, retrying in 10 seconds..."
+        sleep 20
+      done
 
       # Getting the prowjob spyglass URL
       while true; do
@@ -309,10 +319,10 @@ spec:
         fi
       done
 
-      echo -n "${PROWJOB_ID}" | tee $(results.PROWJOB_ID.path)
+      echo "${PROWJOB_ID}" | tee $(results.PROWJOB_ID.path)
       echo
-      echo -n "🔗 "
-      echo -n "${PROWJOB_URL}" | tee $(results.PROWJOB_URL.path)
+      echo "🔗 "
+      echo "${PROWJOB_URL}" | tee $(results.PROWJOB_URL.path)
   - name: report-prowjob-status
     image: registry.access.redhat.com/ubi9/ubi:latest
     env:
@@ -325,27 +335,36 @@ spec:
           key: token
     script: |
       #!/usr/bin/env bash
+      set -o pipefail
+
+      cleanup() {
+        echo "⚠️  Received interrupt signal. Prowjob is still running..."
+        echo "INTERRUPTED" | tee $(results.PROWJOB_STATUS.path)
+        exit 1
+      }
+      trap cleanup SIGINT SIGTERM SIGHUP
+
       dnf install jq -y --quiet > /dev/null
       PROWJOB_ID=$(cat $PROWJOB_ID_PATH)
       while true; do
         curl -s -H "Authorization: Bearer $GANGWAY_TOKEN" \
         https://gangway-ci.apps.ci.l2s4.p1.openshiftapps.com/v1/executions/$PROWJOB_ID >output.json
         if ! jq empty output.json 2>/dev/null; then
-          sleep 30
+          sleep 60
           continue
         fi
         STATUS=$(cat output.json | jq '.job_status')
         if [ "$STATUS" == "\"SUCCESS"\" ]; then
           PROWJOB_STATUS="$STATUS"
           echo "✅ "
-          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          echo "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
           exit 0
         fi
         if [ "$STATUS" == "\"FAILURE"\" ] || [ "$STATUS" == "\"ABORTED"\" ] || [ "$STATUS" == "\"ERROR"\" ]; then
           PROWJOB_STATUS="$STATUS"
           echo "❌ "
-          echo -n "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
+          echo "${PROWJOB_STATUS}" | tee $(results.PROWJOB_STATUS.path)
           exit 1
         fi
-        sleep 30
+        sleep 60
       done
