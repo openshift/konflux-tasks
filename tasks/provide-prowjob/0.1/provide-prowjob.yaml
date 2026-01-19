@@ -128,9 +128,17 @@ spec:
       export DOCKERFILE_LITERAL
 
       if [[ -z "$VARIANT" ]]; then
-        CI_OPERATOR_CONFIG=$(curl -sSL https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/"${ORG}-${REPO}-${TARGET_BRANCH}.yaml")
+        CI_OPERATOR_CONFIG_URL="https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/${ORG}-${REPO}-${TARGET_BRANCH}.yaml"
       else
-        CI_OPERATOR_CONFIG=$(curl -sSL https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/"${ORG}-${REPO}-${TARGET_BRANCH}__${VARIANT}.yaml")
+        CI_OPERATOR_CONFIG_URL="https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/${ORG}-${REPO}-${TARGET_BRANCH}__${VARIANT}.yaml"
+      fi
+
+      CI_OPERATOR_CONFIG=$(curl -fsSL "$CI_OPERATOR_CONFIG_URL")
+      CURL_EXIT_CODE=$?
+      if [[ $CURL_EXIT_CODE -ne 0 ]] || [[ -z "$CI_OPERATOR_CONFIG" ]]; then
+        echo "❌ Error: Failed to fetch ci-operator config file"
+        echo "   URL: $CI_OPERATOR_CONFIG_URL"
+        exit 1
       fi
 
       # Konflux Image
