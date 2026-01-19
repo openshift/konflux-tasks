@@ -245,9 +245,9 @@ spec:
       set -o pipefail
 
       cleanup() {
-        echo "⚠️  Received interrupt signal. Prowjob is still running..."
+        echo "⚠️  Received interrupt signal. The prowjob will still be running!"
         echo "UNKNOWN" | tee $(results.PROWJOB_STATUS.path)
-        exit 1
+        kill -9 $$
       }
       trap cleanup SIGINT SIGTERM SIGHUP
 
