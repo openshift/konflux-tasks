@@ -169,6 +169,17 @@ spec:
         yq -i '(.external_images."'${IMAGE_IN_CONFIG}'".tag = "'${TAG}'")' config.yaml
       fi
 
+      # Filter tests to only include the test matching this prowjob
+      if [[ -z "$VARIANT" ]]; then
+        PJ_PREFIX="-ci-${ORG}-${REPO}-${TARGET_BRANCH}-"
+      else
+        PJ_PREFIX="-ci-${ORG}-${REPO}-${TARGET_BRANCH}__${VARIANT}-"
+      fi
+      TEST_NAME="${PROWJOB_NAME#*${PJ_PREFIX}}"
+      if [[ -n "$TEST_NAME" && "$TEST_NAME" != "$PROWJOB_NAME" ]]; then
+        yq -i 'del(.tests[] | select(.as != "'"${TEST_NAME}"'"))' config.yaml
+      fi
+
       # ENV var modifications
       if [[ -n "$ENVS" ]]; then
         IFS=',' read -ra PAIRS <<< "$ENVS"
