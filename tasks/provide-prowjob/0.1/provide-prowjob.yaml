@@ -14,6 +14,12 @@ spec:
   - name: PROWJOB_NAME
     type: string
     description: 'Name of the Prow job to trigger'
+  - name: PROWJOB_ORG
+    type: string
+    description: 'Name of the GitHub organization hosting the Prow job to trigger'
+  - name: PROWJOB_REPO
+    type: string
+    description: 'Name of the GitHub repository hosting the Prow job to trigger'
   - name: IMAGE_IN_CONFIG
     type: string
     default: ''
@@ -95,6 +101,10 @@ spec:
       value: $(params.DOCKERFILE_ADDITIONS)
     - name: PROWJOB_NAME
       value: $(params.PROWJOB_NAME)
+    - name: PROWJOB_ORG
+      value: $(params.PROWJOB_ORG)
+    - name: PROWJOB_REPO
+      value: $(params.PROWJOB_REPO)
     - name: IMAGE_IN_CONFIG
       value: $(params.IMAGE_IN_CONFIG)
     - name: VARIANT
@@ -138,6 +148,11 @@ spec:
         DOCKERFILE_LITERAL=""
       fi
       export DOCKERFILE_LITERAL
+
+      if [[ -n "$PROWJOB_ORG" ]] && [[ -n "$PROWJOB_REPO" ]]; then
+        ORG="${PROWJOB_ORG}"
+        REPO="${PROWJOB_REPO}"
+      fi
 
       if [[ -z "$VARIANT" ]]; then
         CI_OPERATOR_CONFIG_URL="https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/${ORG}/${REPO}/${ORG}-${REPO}-${TARGET_BRANCH}.yaml"
