@@ -54,7 +54,7 @@ assert_eq "kept test is e2e-gcp" "e2e-gcp" "$(remaining_test_name)"
 
 echo "=== Test: filter with variant ==="
 create_config
-run_filter "periodic-ci-openshift-myrepo-main__ocp416-e2e-azure" "openshift" "myrepo" "main" "ocp416"
+run_filter "periodic-ci-openshift-myrepo-main-ocp416-e2e-azure" "openshift" "myrepo" "main" "ocp416"
 assert_eq "only 1 test remains" "1" "$(count_tests)"
 assert_eq "kept test is e2e-azure" "e2e-azure" "$(remaining_test_name)"
 

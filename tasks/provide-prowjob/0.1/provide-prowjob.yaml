@@ -200,7 +200,7 @@ spec:
       if [[ -z "$VARIANT" ]]; then
         PJ_PREFIX="-ci-${ORG}-${REPO}-${TARGET_BRANCH}-"
       else
-        PJ_PREFIX="-ci-${ORG}-${REPO}-${TARGET_BRANCH}__${VARIANT}-"
+        PJ_PREFIX="-ci-${ORG}-${REPO}-${TARGET_BRANCH}-${VARIANT}-"
       fi
       TEST_NAME="${PROWJOB_NAME#*${PJ_PREFIX}}"
       if [[ -n "$TEST_NAME" && "$TEST_NAME" != "$PROWJOB_NAME" ]]; then
