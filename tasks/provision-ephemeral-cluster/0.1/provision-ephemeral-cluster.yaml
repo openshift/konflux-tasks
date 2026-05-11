@@ -187,7 +187,7 @@ spec:
       - name: OWNER_UID
         value: $(params.ownerUid)
       - name: SECRET
-        value: $(context.taskRun.name)-secret
+        value: $(context.taskRun.name)
       - name: CLUSTER_READY_TIMEOUT
         value: $(params.timeout)
     script: |
@@ -213,8 +213,9 @@ spec:
               exit 1
           fi
 
+          claim_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "Ready" and .status == "True")' <<<"$ec")
           cluster_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
-          if [ "$cluster_ready" = "true" ]; then
+          if [ "$claim_ready" = "true" ] && [ "$cluster_ready" = "true" ]; then
               echo "The cluster is ready"
               echo "SecretRef: $SECRET"
               echo -n "$SECRET" >"$(results.secretRef.path)"
