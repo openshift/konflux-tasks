@@ -20,7 +20,7 @@ spec:
     description: "Wait for the ephemeral cluster to be deprovisioned until this timeout is reached"
   steps:
   - name: deprovision-ephemeral-cluster
-    image: quay.io/konflux-ci/konflux-test:v1.4.31@sha256:a7cae9e96663e277a3904d0c78630508ddb6cc8eebaa912a840bd20f68dcaad1
+    image: quay.io/konflux-ci/konflux-test:v1.4.52@sha256:aa2c97da9bb73a4e8d1c6b41950f8d902b74461be0e042debe89277fdc4ebe49
     env:
     - name: CLAIM_NAME
       value: $(params.testPlatformClusterClaimName)
@@ -32,6 +32,18 @@ spec:
       #!/bin/bash
       set -eo pipefail
 
+      DEPROVISION_SUCCESS=0
+
+      on_exit() {
+          if [ "$DEPROVISION_SUCCESS" -eq 0 ]; then
+              echo "Dumping TestPlatformCluster claim status for debugging:"
+              oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$CLAIM_NAME" -o yaml
+          fi
+      }
+      trap on_exit EXIT
+
+      echo "Deprovisioning cluster: $CLAIM_NAME (namespace: $NAMESPACE)"
+
       cat >deprovision-patch.json <<EOF
       [{
           "op": "add",
@@ -40,9 +52,12 @@ spec:
       }]
       EOF
 
+      echo "Patching TestPlatformCluster claim to trigger teardown..."
       oc -n "$NAMESPACE" patch testplatformclusters.ci.openshift.org "$CLAIM_NAME" --type=json --patch-file=deprovision-patch.json
 
+      echo "Waiting for deprovisioning to complete (timeout: $CLUSTER_DEPROVISIONING_TIMEOUT)..."
       if oc -n "$NAMESPACE" wait testplatformclusters.ci.openshift.org "$CLAIM_NAME" --for=condition=ProwJobCompleted=true --timeout="$CLUSTER_DEPROVISIONING_TIMEOUT"; then
+        DEPROVISION_SUCCESS=1
         echo 'The cluster has been properly deprovisioned'
       else
         echo "Error: failed to deprovision the cluster"

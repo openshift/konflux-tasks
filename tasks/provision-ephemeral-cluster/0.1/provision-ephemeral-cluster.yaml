@@ -156,7 +156,7 @@ spec:
     type: string
   steps:
   - name: provision-ephemeral-cluster
-    image: quay.io/konflux-ci/konflux-test:v1.4.31@sha256:a7cae9e96663e277a3904d0c78630508ddb6cc8eebaa912a840bd20f68dcaad1
+    image: quay.io/konflux-ci/konflux-test:v1.4.52@sha256:aa2c97da9bb73a4e8d1c6b41950f8d902b74461be0e042debe89277fdc4ebe49
     env:
       - name: BUILD_ROOT
         value: $(params.buildRoot)
@@ -197,6 +197,15 @@ spec:
       # Use this to make sure the PJ URL is printed only once
       URL_DUMPED=0
       TP_CLUSTER_NAME=''
+      CLUSTER_READY=0
+
+      on_exit() {
+          if [ "$CLUSTER_READY" -eq 0 ] && [ -n "$TP_CLUSTER_NAME" ]; then
+              echo "Dumping TestPlatformCluster claim status for debugging:"
+              oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o yaml
+          fi
+      }
+      trap on_exit EXIT
 
       check_cluster_ready() {
           ec="$1"
@@ -208,6 +217,7 @@ spec:
           fi
 
           phase=$(jq -r '(.status.conditions // [])[]|select(.type == "_EphemeralClusterPhase").message' <<<"$ec")
+          echo "Cluster phase: ${phase:-unknown}"
           if [ "$phase" = "Failed" ]; then
               echo "Error: failed to provision the cluster"
               exit 1
@@ -216,6 +226,7 @@ spec:
           claim_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "Ready" and .status == "True")' <<<"$ec")
           cluster_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
           if [ "$claim_ready" = "true" ] && [ "$cluster_ready" = "true" ]; then
+              CLUSTER_READY=1
               echo "The cluster is ready"
               echo "SecretRef: $SECRET"
               echo -n "$SECRET" >"$(results.secretRef.path)"
@@ -271,18 +282,34 @@ spec:
           baseImages: $BASE_IMAGES
           externalImages: $EXTERNAL_IMAGES
           releases: $RELEASES
-          resources: $RESOURCES
           test:
-            clusterProfile: $CLUSTER_PROFILE
-            clusterClaim: $CLUSTER_CLAIM
             env: $ENV
             workflow: $WORKFLOW
         writeConnectionSecretToRef:
           name: $SECRET
       EOF
 
+      # Add optional fields only when provided
+      if [ -n "$RESOURCES" ]; then
+        yq -i '.spec.ciOperator.resources = env(RESOURCES)' testplatformcluster_claim.yaml
+      fi
+      if [ -n "$CLUSTER_PROFILE" ]; then
+        yq -i '.spec.ciOperator.test.clusterProfile = strenv(CLUSTER_PROFILE)' testplatformcluster_claim.yaml
+      fi
+      if [ "$CLUSTER_CLAIM" != '{}' ]; then
+        yq -i '.spec.ciOperator.test.clusterClaim = env(CLUSTER_CLAIM)' testplatformcluster_claim.yaml
+      fi
+
+      echo "Generated TestPlatformCluster claim:"
+      cat testplatformcluster_claim.yaml
+
+      echo "Creating TestPlatformCluster claim..."
       TP_CLUSTER_NAME=$(oc create -f testplatformcluster_claim.yaml -o=jsonpath='{.metadata.name}')
+      echo "Created TestPlatformCluster: $TP_CLUSTER_NAME"
 
       start_timeout &
+      echo "Watching for cluster to become ready (timeout: $CLUSTER_READY_TIMEOUT)..."
       watch_ephemeral_cluster
+      echo "Watch ended without detecting cluster ready or failed state"
+      exit 1
 

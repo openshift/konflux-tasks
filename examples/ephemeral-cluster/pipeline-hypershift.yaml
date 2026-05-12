@@ -1,0 +1,79 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ephemeral-cluster-hypershift
+spec:
+  description: >-
+    Provision and deprovision an ephemeral HyperShift hosted cluster.
+  tasks:
+  - name: provision-ephemeral-cluster
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/provision-ephemeral-cluster/0.1/provision-ephemeral-cluster.yaml
+    params:
+    - name: ownerName
+      value: $(context.pipelineRun.name)
+    - name: ownerUid
+      value: $(context.pipelineRun.uid)
+    - name: workflow
+      value: hypershift-hostedcluster-workflow
+    - name: clusterProfile
+      value: openshift-org-aws
+    - name: env
+      value: '{"COMPUTE_NODE_TYPE": "m5.xlarge", "HYPERSHIFT_NODE_COUNT": "3"}'
+    - name: releases
+      value: '{"latest":{"release":{"channel":"stable","version":"4.17","architecture":"multi"}}}'
+  - name: run-test
+    runAfter:
+    - provision-ephemeral-cluster
+    params:
+    - name: kubeconfigSecretRef
+      value: $(tasks.provision-ephemeral-cluster.results.secretRef)
+    taskSpec:
+      params:
+      - name: kubeconfigSecretRef
+        type: string
+        description: "The secret that holds the Ephemeral Cluster kubeconfig"
+      steps:
+      - name: run-test
+        image: quay.io/konflux-ci/konflux-test:v1.4.52@sha256:aa2c97da9bb73a4e8d1c6b41950f8d902b74461be0e042debe89277fdc4ebe49
+        env:
+        - name: KUBECONFIG
+          value: /var/run/secrets/cluster/kubeconfig
+        volumeMounts:
+        - name: cluster-credentials
+          mountPath: /var/run/secrets/cluster
+          readOnly: true
+        script: |
+          #!/usr/bin/env bash
+          set -eo pipefail
+
+          oc whoami
+      volumes:
+      - name: cluster-credentials
+        secret:
+          secretName: $(params.kubeconfigSecretRef)
+
+  finally:
+  - name: deprovision-ephemeral-cluster
+    taskRef:
+      resolver: git
+      params:
+      - name: url
+        value: https://github.com/openshift/konflux-tasks
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: tasks/deprovision-ephemeral-cluster/0.1/deprovision-ephemeral-cluster.yaml
+    params:
+    - name: testPlatformClusterClaimName
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimName)
+    - name: testPlatformClusterClaimNamespace
+      value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimNamespace)
+
