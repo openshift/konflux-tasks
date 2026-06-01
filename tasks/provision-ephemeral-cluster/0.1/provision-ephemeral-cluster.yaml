@@ -237,24 +237,18 @@ spec:
       }
 
       watch_ephemeral_cluster() {
-          # Use a named pipe instead of `oc get -w | while ...; do ... done` because it seems that,
-          # by using an anonymous pipe `|`, the script doesn't terminate when executing `exit 1`
-          ec_stream="$(mktemp --dry-run --tmpdir=/tmp)"
-          mkfifo "$ec_stream"
+          local poll_interval=1m
 
-          oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" --watch -o json >"$ec_stream" &
-
-          # `oc watch -o json` streams pretty-printed json objects, hence we have to read its output
-          # line by line and stops when an object has been fully dumped. We consider an object to
-          # be fully dumped when we find a line matching this regex: '^\}$'.
-          json=''
-          while IFS= read -r line; do
-              json=$(echo -E "${json}${line}")
-              if grep -qP '^\}$' <<<"$line"; then
-                  check_cluster_ready "$json"
-                  json=''
+          while true; do
+              if ec=$(oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o json 2>&1); then
+                  check_cluster_ready "$ec"
+              else
+                  echo "Warning: failed to get TestPlatformCluster '$TP_CLUSTER_NAME', retrying in ${poll_interval}..."
+                  echo "$ec"
               fi
-          done <"$ec_stream"
+
+              sleep "$poll_interval"
+          done
       }
 
       # `start_timeout` is supposed to run as a subprocess. When the `sleep` is done, kill the parent,
