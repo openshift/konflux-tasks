@@ -190,6 +190,10 @@ spec:
         value: $(context.taskRun.name)
       - name: CLUSTER_READY_TIMEOUT
         value: $(params.timeout)
+      - name: PIPELINE_RUN_NAME
+        value: $(context.pipelineRun.name)
+      - name: TASK_RUN_NAME
+        value: $(context.taskRun.name)
     script: |
       #!/bin/bash
       set -eo pipefail
@@ -263,6 +267,8 @@ spec:
       apiVersion: ci.openshift.org/v1alpha1
       kind: TestPlatformCluster
       metadata:
+        annotations:
+          ephemeralcluster.ci.openshift.io/task-run-name: $TASK_RUN_NAME
         name: $CLAIM_NAME
         namespace: $NAMESPACE
         ownerReferences:
@@ -292,6 +298,11 @@ spec:
       fi
       if [ "$CLUSTER_CLAIM" != '{}' ]; then
         yq -i '.spec.ciOperator.test.clusterClaim = env(CLUSTER_CLAIM)' testplatformcluster_claim.yaml
+      fi
+
+      # A TaskRun may run standalone, without an associated PipelineRun
+      if [ "$PIPELINE_RUN_NAME" ]; then
+        yq -i '.metadata.annotations["ephemeralcluster.ci.openshift.io/pipeline-run-name"] = env(PIPELINE_RUN_NAME)' testplatformcluster_claim.yaml
       fi
 
       echo "Generated TestPlatformCluster claim:"
