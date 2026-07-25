@@ -19,6 +19,11 @@ The provision-ephemeral-cluster task provisions an ephemeral cluster by leveragi
 |resources|Set requests and limits on the containers involved in the ephemeral cluster provisioning procedure. See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information. This parameter is expected to be a valid JSON object|{"*":{"requests":{"cpu":"200m"},"limits":{"memory":"400Mi"}}}|false|
 |timeout|Wait for the ephemeral cluster to be ready until this timeout is reached|2h|false|
 
+## Workspaces
+|name|description|optional|
+|---|---|---|
+|env-files|Files in this workspace are injected as environment variables into the provisioning workflow. Each file's name becomes the variable name and its content becomes the value. These override any same-named keys from the `env` parameter. Use this when environment variable values are too large to pass inline through the `env` JSON parameter.|true|
+
 ## Results
 |name|description|
 |---|---|
