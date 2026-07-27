@@ -144,6 +144,14 @@ spec:
     type: string
     default: 2h
     description: "Wait for the ephemeral cluster to be ready until this timeout is reached"
+  workspaces:
+  - name: env-files
+    optional: true
+    description: >-
+      Optional workspace for passing large environment variable values as files.
+      Each file in the workspace root is injected as an environment variable where
+      the filename becomes the variable name and the file content becomes the value.
+      These override any same-named keys from the `env` parameter.
   results:
   - name: secretRef
     description: Name of a Secret containing kubeconfig and password to access the provisioned ephemeral cluster.
@@ -262,6 +270,18 @@ spec:
           echo "Timed out: cluster has not come up in $CLUSTER_READY_TIMEOUT"
           kill $$
       }
+
+      # Merge env-files workspace contents into ENV
+      if [ "$(workspaces.env-files.bound)" = "true" ]; then
+        for f in "$(workspaces.env-files.path)"/*; do
+          if [ -f "$f" ]; then
+            varname=$(basename "$f")
+            content=$(cat "$f")
+            ENV=$(jq --arg k "$varname" --arg v "$content" '. + {($k): $v}' <<< "$ENV")
+            echo "Injected env var from workspace file: $varname ($(wc -c < "$f") bytes)"
+          fi
+        done
+      fi
 
       cat <<EOF >testplatformcluster_claim.yaml
       apiVersion: ci.openshift.org/v1alpha1
