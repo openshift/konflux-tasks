@@ -198,8 +198,6 @@ spec:
         value: $(context.taskRun.name)
       - name: CLUSTER_READY_TIMEOUT
         value: $(params.timeout)
-      - name: PIPELINE_RUN_NAME
-        value: $(context.pipelineRun.name)
       - name: TASK_RUN_NAME
         value: $(context.taskRun.name)
     script: |
@@ -320,9 +318,10 @@ spec:
         yq -i '.spec.ciOperator.test.clusterClaim = env(CLUSTER_CLAIM)' testplatformcluster_claim.yaml
       fi
 
-      # A TaskRun may run standalone, without an associated PipelineRun
-      if [ "$PIPELINE_RUN_NAME" ]; then
-        yq -i '.metadata.annotations["ephemeralcluster.ci.openshift.io/pipeline-run-name"] = env(PIPELINE_RUN_NAME)' testplatformcluster_claim.yaml
+      # $(context.pipelineRun.name) is not resolved inside Task specs, so we
+      # derive the PipelineRun name from ownerName when ownerKind is PipelineRun.
+      if [ "$OWNER_KIND" = "PipelineRun" ]; then
+        yq -i '.metadata.annotations["ephemeralcluster.ci.openshift.io/pipeline-run-name"] = env(OWNER_NAME)' testplatformcluster_claim.yaml
       fi
 
       echo "Generated TestPlatformCluster claim:"
