@@ -203,6 +203,8 @@ spec:
         value: $(params.ownerUid)
       - name: SECRET
         value: $(context.taskRun.name)
+      - name: HOSTED_MANAGEMENT_CLUSTER
+        value: $(params.hosted_management_cluster)
       - name: CLUSTER_READY_TIMEOUT
         value: $(params.timeout)
       - name: PIPELINE_RUN_NAME
@@ -289,6 +291,7 @@ spec:
           fi
         done
       fi
+      ENV=$(jq '. + {"HOSTED_MANAGEMENT_CLUSTER" : $HOSTED_MANAGEMENT_CLUSTER}' <<< "$ENV")
 
       cat <<EOF >testplatformcluster_claim.yaml
       apiVersion: ci.openshift.org/v1alpha1
