@@ -140,13 +140,6 @@ spec:
           "limits":   {"memory": "400Mi"},
         }
       }
-  - name: hosted_management_cluster
-    type: string
-    default: hosted-mgmt2
-    description: >-
-      The cluster that will be used to host the control plane pods for clusters created with hypershift.
-      See https://docs.ci.openshift.org/getting-started/useful-links/ for a list of available clusters,
-      considering `hosted-mgmt*` ones for this kind of task.      
   - name: timeout
     type: string
     default: 2h

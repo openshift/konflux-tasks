@@ -29,8 +29,6 @@ spec:
       value: '{"COMPUTE_NODE_TYPE": "m5.xlarge", "HYPERSHIFT_NODE_COUNT": "3"}'
     - name: releases
       value: '{"latest":{"release":{"channel":"stable","version":"4.17","architecture":"multi"}}}'
-    - name: hosted_management_cluster
-      value: hosted-mgmt2
   - name: run-test
     runAfter:
     - provision-ephemeral-cluster
