@@ -56,10 +56,20 @@ spec:
       oc -n "$NAMESPACE" patch testplatformclusters.ci.openshift.org "$CLAIM_NAME" --type=json --patch-file=deprovision-patch.json
 
       echo "Waiting for deprovisioning to complete (timeout: $CLUSTER_DEPROVISIONING_TIMEOUT)..."
-      if oc -n "$NAMESPACE" wait testplatformclusters.ci.openshift.org "$CLAIM_NAME" --for=condition=ProwJobCompleted=true --timeout="$CLUSTER_DEPROVISIONING_TIMEOUT"; then
-        DEPROVISION_SUCCESS=1
-        echo 'The cluster has been properly deprovisioned'
+      oc -n "$NAMESPACE" wait testplatformclusters.ci.openshift.org "$CLAIM_NAME" --for=condition=ProwJobCompleted=true --timeout="$CLUSTER_DEPROVISIONING_TIMEOUT"
+
+      if ec=$(oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$CLAIM_NAME" -o json 2>&1); then
+        deprovision_succeeded=$(jq -r '.status.phase == "Deprovisioned"' <<<"$ec")
+        if [ "$deprovision_succeeded" == "true" ]; then
+          DEPROVISION_SUCCESS=1
+          echo 'The cluster has been properly deprovisioned'
+        else
+          echo "Error: failed to deprovision the cluster"
+          echo "$ec"
+          exit 1
+        fi
       else
-        echo "Error: failed to deprovision the cluster"
+        echo "Error: failed to get TestPlatformCluster '$CLAIM_NAME'"
+        echo "$ec"
         exit 1
       fi
