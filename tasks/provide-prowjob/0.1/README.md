@@ -9,7 +9,7 @@ To use these tasks, ensure you’ve completed the following:
 
 To get the token used to trigger prowjobs, run:
 ```
-oc --context app.ci -n konflux-tp extract secret/gangway-token-dockercfg-wbq9f
+oc --context app.ci -n "konflux-tp" extract "secret/api-token-secret-2025-04" --to=- --keys=token
 ```
 > 🔑 This is a long-lived token used only for triggering prowjobs via this pipeline.
 
