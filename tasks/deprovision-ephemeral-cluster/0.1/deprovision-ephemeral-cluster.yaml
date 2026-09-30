@@ -36,8 +36,9 @@ spec:
 
       on_exit() {
           if [ "$DEPROVISION_SUCCESS" -eq 0 ]; then
-              echo "Dumping TestPlatformCluster claim status for debugging:"
-              oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$CLAIM_NAME" -o yaml
+              echo "Dumping the TestPlatformCluster claim for debugging:"
+              oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$CLAIM_NAME" -o yaml ||
+                  echo "Error: failed to get TestPlatformCluster '$CLAIM_NAME' in namespace '$NAMESPACE'"
           fi
       }
       trap on_exit EXIT
@@ -59,7 +60,7 @@ spec:
       oc -n "$NAMESPACE" wait testplatformclusters.ci.openshift.org "$CLAIM_NAME" --for=condition=ProwJobCompleted=true --timeout="$CLUSTER_DEPROVISIONING_TIMEOUT"
 
       if ec=$(oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$CLAIM_NAME" -o json 2>&1); then
-        deprovision_succeeded=$(jq -r 'any((.status.conditions // [])[]; .type == "_EphemeralClusterPhase" and .message == "Deprovisioned")' <<<"$ec")
+        deprovision_succeeded=$(jq -r 'any((.status.conditions // [])[]; .type == "ProwJobCompleted" and .reason == "ProwJobCompleted")' <<<"$ec")
         if [ "$deprovision_succeeded" == "true" ]; then
           DEPROVISION_SUCCESS=1
           echo 'The cluster has been properly deprovisioned'
