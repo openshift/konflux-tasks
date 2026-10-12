@@ -71,7 +71,7 @@ spec:
       - name: revision
         value: main
       - name: pathInRepo
-        value: tasks/provision-ephemeral-cluster/0.1/deprovision-ephemeral-cluster.yaml
+        value: tasks/deprovision-ephemeral-cluster/0.1/deprovision-ephemeral-cluster.yaml
     params:
     - name: testPlatformClusterClaimName
       value: $(tasks.provision-ephemeral-cluster.results.testPlatformClusterClaimName)

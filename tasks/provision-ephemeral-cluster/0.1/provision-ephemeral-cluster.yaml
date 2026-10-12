@@ -212,7 +212,7 @@ spec:
       on_exit() {
           if [ "$CLUSTER_READY" -eq 0 ] && [ -n "$TP_CLUSTER_NAME" ]; then
               echo "Dumping TestPlatformCluster claim status for debugging:"
-              oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o yaml
+              oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o yaml
           fi
       }
       trap on_exit EXIT
@@ -228,10 +228,16 @@ spec:
 
           phase=$(jq -r '(.status.conditions // [])[]|select(.type == "_EphemeralClusterPhase").message' <<<"$ec")
           echo "Cluster phase: ${phase:-unknown}"
-          if [ "$phase" = "Failed" ]; then
-              echo "Error: failed to provision the cluster"
-              exit 1
-          fi
+          case "$phase" in
+              Failed|InitializationFailed|ProvisioningFailed|DeprovisioningFailure)
+                  echo "Error: failed to provision the cluster (phase: $phase)"
+                  exit 1
+                  ;;
+              Deprovisioning|Deprovisioned)
+                  echo "Error: cluster is no longer available (phase: $phase)"
+                  exit 1
+                  ;;
+          esac
 
           claim_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "Ready" and .status == "True")' <<<"$ec")
           cluster_ready=$(jq -r 'any((.status.conditions // [])[]; .type == "ClusterReady" and .status == "True")' <<<"$ec")
@@ -250,7 +256,7 @@ spec:
           local poll_interval=1m
 
           while true; do
-              if ec=$(oc get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o json 2>&1); then
+              if ec=$(oc -n "$NAMESPACE" get testplatformclusters.ci.openshift.org "$TP_CLUSTER_NAME" -o json 2>&1); then
                   check_cluster_ready "$ec"
               else
                   echo "Warning: failed to get TestPlatformCluster '$TP_CLUSTER_NAME', retrying in ${poll_interval}..."
