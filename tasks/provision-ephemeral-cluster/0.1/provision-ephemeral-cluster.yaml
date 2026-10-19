@@ -144,6 +144,10 @@ spec:
     type: string
     default: 2h
     description: "Wait for the ephemeral cluster to be ready until this timeout is reached"
+  - name: waitForTearDownTimeout
+    type: string
+    default: ""
+    description: "How long to wait for the tearDown signal before automatically deprovisioning the cluster"
   workspaces:
   - name: env-files
     optional: true
@@ -198,6 +202,8 @@ spec:
         value: $(context.taskRun.name)
       - name: CLUSTER_READY_TIMEOUT
         value: $(params.timeout)
+      - name: WAIT_FOR_TEAR_DOWN_TIMEOUT
+        value: $(params.waitForTearDownTimeout)
       - name: TASK_RUN_NAME
         value: $(context.taskRun.name)
     script: |
@@ -322,6 +328,9 @@ spec:
       fi
       if [ "$CLUSTER_CLAIM" != '{}' ]; then
         yq -i '.spec.ciOperator.test.clusterClaim = env(CLUSTER_CLAIM)' testplatformcluster_claim.yaml
+      fi
+      if [ -n "$WAIT_FOR_TEAR_DOWN_TIMEOUT" ]; then
+        yq -i '.spec.ciOperator.test.waitForTearDownTimeout = strenv(WAIT_FOR_TEAR_DOWN_TIMEOUT)' testplatformcluster_claim.yaml
       fi
 
       # $(context.pipelineRun.name) is not resolved inside Task specs, so we

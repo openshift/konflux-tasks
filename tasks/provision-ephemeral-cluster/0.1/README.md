@@ -18,6 +18,9 @@ The provision-ephemeral-cluster task provisions an ephemeral cluster by leveragi
 |releases|The OpenShift release payload specification that will be installed on the ephemeral cluster. See https://docs.ci.openshift.org/docs/architecture/ci-operator/#describing-inclusion-in-an-openshift-release for more information. This parameter is expected to be a valid JSON object|'{}'|false|
 |resources|Set requests and limits on the containers involved in the ephemeral cluster provisioning procedure. See https://docs.ci.openshift.org/docs/architecture/ci-operator/ for more information. This parameter is expected to be a valid JSON object|{"*":{"requests":{"cpu":"200m"},"limits":{"memory":"400Mi"}}}|false|
 |timeout|Wait for the ephemeral cluster to be ready until this timeout is reached|2h|false|
+|waitForTearDownTimeout|How long to wait for the tearDown signal before automatically deprovisioning the cluster|""|false|
+
+When `waitForTearDownTimeout` is empty, the default timeout of `2h` applies. Set a duration such as `4h` or `2h30m` to override it.
 
 ## Workspaces
 |name|description|optional|
