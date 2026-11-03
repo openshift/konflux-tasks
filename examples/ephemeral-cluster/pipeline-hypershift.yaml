@@ -5,6 +5,15 @@ metadata:
 spec:
   description: >-
     Provision and deprovision an ephemeral HyperShift hosted cluster.
+  params:
+  - name: workflow
+    type: string
+    default: hypershift-hostedcluster-workflow
+    description: The workflow used to provision the hosted cluster.
+  - name: hosted-mgmt-cluster
+    type: string
+    default: hosted-mgmt2 
+    description: The cluster used to provision the hosted ones. 
   tasks:
   - name: provision-ephemeral-cluster
     taskRef:
@@ -22,11 +31,16 @@ spec:
     - name: ownerUid
       value: $(context.pipelineRun.uid)
     - name: workflow
-      value: hypershift-hostedcluster-workflow
+      value: $(params.workflow)
     - name: clusterProfile
       value: openshift-org-aws
     - name: env
-      value: '{"COMPUTE_NODE_TYPE": "m5.xlarge", "HYPERSHIFT_NODE_COUNT": "3"}'
+      value: |
+        {
+          "COMPUTE_NODE_TYPE": "m5.xlarge",
+          "HYPERSHIFT_NODE_COUNT": "3",
+          "HOSTED_MANAGEMENT_CLUSTER" : "$(params.hosted-mgmt-cluster)"
+        }
     - name: releases
       value: '{"latest":{"release":{"channel":"stable","version":"4.17","architecture":"multi"}}}'
   - name: run-test
