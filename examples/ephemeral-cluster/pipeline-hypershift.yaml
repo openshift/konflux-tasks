@@ -8,7 +8,7 @@ spec:
   params:
   - name: workflow
     type: string
-    default: hypershift-hostedcluster-workflow
+    default: hypershift-hostedcluster-htpasswd
     description: The workflow used to provision the hosted cluster.
   - name: hosted-mgmt-cluster
     type: string
@@ -33,7 +33,7 @@ spec:
     - name: workflow
       value: $(params.workflow)
     - name: clusterProfile
-      value: openshift-org-aws
+      value: aws-konflux-stg
     - name: env
       value: |
         {
